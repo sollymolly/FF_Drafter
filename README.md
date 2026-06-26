@@ -28,7 +28,7 @@ ffdrafter/
   store.py             # parquet boards + crash-safe JSON session snapshot
   data/                # free-source ingestion (nflverse, ESPN) + ID reconciliation ✓
   features/            # veteran + rookie feature tracks              ✓
-  model/               # projections (project.py) + backtest.py       ✓
+  model/               # project.py, backtest.py, narrative.py, rookie_card.py ✓
   valuation/           # VOR + auction-dollar conversion + tiers      ✓
   draft/               # live state, inflation, recommendation engine ✓
 app/streamlit_app.py   # draft-day dashboard                         ✓
@@ -73,7 +73,12 @@ model alone; raise `--model-weight` only as far as you trust it. The model's val
 
 ## Status
 
-Done: scaffold, baseline board, live Streamlit assistant, and the projection engine v1
-(nflverse data, veteran + rookie tracks, VOR→dollars, market-blended board, backtest). Next:
-the bounded narrative nudge + rookie deep-dive cards (Phase 5). College stats (CFBD) are a
-planned rookie refinement once a key is set. v1 strategy scope is intentionally lean.
+**v1 complete.** Scaffold, baseline board, live Streamlit assistant, projection engine
+(nflverse data, veteran + rookie tracks, VOR→dollars, market-blended board, backtest), a
+bounded news-sentiment nudge (±10% cap, reason shown), and rookie deep-dive cards (draft
+capital + landing spot + historical comps). The model board defaults to a 50/50 model/market
+blend (`--model-weight`); the nudge can be skipped with `--no-narrative`.
+
+Planned refinements: College stats (CollegeFootballData) to sharpen rookies once a key is
+set; per-opponent nomination strategy; optional ESPN live-draft sync. v1 strategy scope is
+intentionally lean — see the build plan.

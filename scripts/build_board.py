@@ -53,6 +53,8 @@ def main() -> None:
     ap.add_argument("--refresh", action="store_true", help="re-pull ESPN + retrain")
     ap.add_argument("--model-weight", type=float, default=0.5,
                     help="model vs market weight for the model board (0=market, 1=model)")
+    ap.add_argument("--no-narrative", action="store_true",
+                    help="skip the bounded news-sentiment nudge")
     args = ap.parse_args()
 
     mkt = market.pull_espn(force_refresh=args.refresh)
@@ -60,7 +62,14 @@ def main() -> None:
 
     if args.source == "model":
         proj = _load_or_build_projections(args.refresh)
-        board = auction.build_model_board(proj, baseline, model_weight=args.model_weight)
+        nudges = None
+        if not args.no_narrative:
+            from ffdrafter.model import narrative
+            nudges = narrative.fetch_nudges(force_refresh=args.refresh)
+        board = auction.build_model_board(proj, baseline, model_weight=args.model_weight,
+                                          narrative_df=nudges)
+        from ffdrafter.model import rookie_card
+        rookie_card.build_rookie_cards(proj)
         name = "model"
     else:
         board = baseline

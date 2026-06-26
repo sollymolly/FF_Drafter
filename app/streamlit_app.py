@@ -21,6 +21,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+import pandas as pd
 import streamlit as st
 
 import config
@@ -42,6 +43,11 @@ def load_board():
     if b is None:
         b = store.load_board("baseline")
     return b
+
+
+@st.cache_data(show_spinner=False)
+def load_rookie_cards():
+    return store.load_df(config.PATHS["processed"] / f"rookie_cards_{config.LEAGUE['season']}.parquet")
 
 
 def persist(state: DraftState) -> None:
@@ -199,9 +205,13 @@ with left:
         r4.metric("Suggested max", f"${rec['suggested_max']}")
         notes = [f"{rec['position']} · {rec['team']} · tier {rec['tier']}",
                  f"{rec['opp_can_afford']} opponents can afford ${rec['inflated_value']}"]
+        if rec.get("is_rookie"):
+            notes.append("🎓 rookie — see deep-dive below")
         if rec["last_in_tier"]:
             notes.append("⚠️ **last player in this tier** — a small premium is justified")
         st.caption("  |  ".join(notes))
+        if rec.get("narrative_reason"):
+            st.caption(f"📰 {rec['narrative_reason']}")
 
 # ---- Best available + my roster ----
 with right:
@@ -232,3 +242,25 @@ with right:
         )
     else:
         st.caption("No players yet.")
+
+
+# ---- Rookie deep-dive (full width) ----
+cards = load_rookie_cards()
+if cards is not None and len(cards):
+    st.divider()
+    st.subheader("🎓 Rookie deep-dive")
+    pick = st.selectbox("Rookie", cards["name"].tolist(), key="rookie_pick")
+    rc = cards[cards["name"] == pick].iloc[0]
+    d1, d2, d3, d4 = st.columns(4)
+    d1.metric("Projected", f"{rc['projected_pts']:.0f} pts")
+    d2.metric("Floor–Ceiling", f"{rc['floor']:.0f}–{rc['ceiling']:.0f}")
+    d3.metric("Draft slot", f"#{int(rc['draft_ovr'])}" if pd.notna(rc["draft_ovr"]) else "UDFA")
+    d4.metric("Comp avg", f"{rc['comp_avg_pts']:.0f} pts" if pd.notna(rc["comp_avg_pts"]) else "—")
+    meta = f"{rc['position']} · {rc['team']} · {rc['college']}"
+    if pd.notna(rc.get("age")):
+        meta += f" · age {rc['age']:.0f}"
+    st.caption(meta)
+    if rc["comps"]:
+        slot = int(rc["draft_ovr"]) if pd.notna(rc["draft_ovr"]) else 0
+        st.markdown(f"**Comps — rookies drafted near #{slot}, and what they scored:** {rc['comps']}")
+

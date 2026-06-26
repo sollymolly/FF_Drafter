@@ -105,4 +105,6 @@ def recommend_player(state, board, name: str, factor: float | None = None) -> di
         "tier": int(r["tier"]) if "tier" in r and pd.notna(r["tier"]) else None,
         "last_in_tier": last_in_tier(state, board, key),
         "already_drafted": state.is_drafted(name),
+        "narrative_reason": r.get("narrative_reason"),
+        "is_rookie": bool(r.get("is_rookie")) if pd.notna(r.get("is_rookie")) else False,
     }

@@ -107,7 +107,7 @@ def build_baseline_board(market_df, league: dict = config.LEAGUE):
 
 
 def build_model_board(proj_df, baseline_board, league: dict = config.LEAGUE,
-                      model_weight: float = 0.5):
+                      model_weight: float = 0.5, narrative_df=None):
     """
     Phase 4 board: blend our model with the market for a trust-anchored board.
 
@@ -122,18 +122,34 @@ def build_model_board(proj_df, baseline_board, league: dict = config.LEAGUE,
     import pandas as pd
 
     skill = ("QB", "RB", "WR", "TE")
-    p = compute_vor(proj_df[proj_df["position"].isin(skill)].copy(), league)
+    p_in = proj_df[proj_df["position"].isin(skill)].copy()
+
+    # Bounded narrative nudge: tilt projected points within a hard cap, keep the reason.
+    p_in["narrative_mult"] = 1.0
+    p_in["narrative_reason"] = None
+    if narrative_df is not None and len(narrative_df):
+        eint = pd.to_numeric(p_in["espn_id"], errors="coerce")
+        mult_by_e = {int(e): float(m) for e, m in zip(narrative_df["espn_id"], narrative_df["narrative_mult"]) if pd.notna(e)}
+        reason_by_e = {int(e): r for e, r in zip(narrative_df["espn_id"], narrative_df["narrative_reason"]) if pd.notna(e)}
+        p_in["narrative_mult"] = eint.map(mult_by_e).fillna(1.0)
+        p_in["narrative_reason"] = eint.map(reason_by_e)
+        p_in["projected_pts"] = p_in["projected_pts"] * p_in["narrative_mult"]
+
+    p = compute_vor(p_in, league)
 
     # VOR / projection lookups by espn_id (preferred) then name_key (fallback).
     p_e = p.dropna(subset=["espn_id"]).copy()
     vor_by_espn = {int(e): float(v) for e, v in zip(p_e["espn_id"], p_e["vor"])}
     vor_by_name, proj_by_name, rookie_by_name = {}, {}, {}
+    reason_by_name, nmult_by_name = {}, {}
     for _, r in p.iterrows():
         nk = r["name_key"]
         if nk not in vor_by_name:
             vor_by_name[nk] = float(r["vor"])
             proj_by_name[nk] = float(r.get("projected_pts", float("nan")))
             rookie_by_name[nk] = bool(r.get("is_rookie", False))
+            reason_by_name[nk] = r.get("narrative_reason")
+            nmult_by_name[nk] = float(r.get("narrative_mult", 1.0))
 
     def lookup(row, by_espn, by_name, default):
         e = row.get("espn_id")
@@ -150,6 +166,8 @@ def build_model_board(proj_df, baseline_board, league: dict = config.LEAGUE,
     b["vor"] = b.apply(lambda r: lookup(r, vor_by_espn, vor_by_name, 0.0), axis=1)
     b["projected_pts"] = b.apply(lambda r: lookup(r, {}, proj_by_name, float("nan")), axis=1)
     b["is_rookie"] = b.apply(lambda r: lookup(r, {}, rookie_by_name, False), axis=1)
+    b["narrative_reason"] = b.apply(lambda r: lookup(r, {}, reason_by_name, None), axis=1)
+    b["narrative_mult"] = b.apply(lambda r: lookup(r, {}, nmult_by_name, 1.0), axis=1)
 
     # Model dollars for skill, calibrated to the market's skill-money total.
     skill_mask = b["position"].isin(skill)
@@ -167,7 +185,8 @@ def build_model_board(proj_df, baseline_board, league: dict = config.LEAGUE,
     b = assign_tiers(b, "value")
     b["source"] = "model_blend"
 
-    cols = BOARD_COLUMNS + ["projected_pts", "is_rookie", "model_value", "market_value"]
+    cols = BOARD_COLUMNS + ["projected_pts", "is_rookie", "model_value", "market_value",
+                            "narrative_reason", "narrative_mult"]
     b = b.sort_values("value", ascending=False).reset_index(drop=True)
     for c in cols:
         if c not in b.columns:
