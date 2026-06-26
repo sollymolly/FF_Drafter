@@ -10,14 +10,14 @@ pyarrow>=15            # Parquet read/write for boards & feature tables
 scipy>=1.13
 
 # --- Free data sources ---
-nfl_data_py>=0.3       # nflverse: stats, rosters, depth charts, draft, combine, ID map
-requests>=2.32         # Sleeper API, CollegeFootballData API, scraping
+nflreadpy>=0.1.5       # nflverse: season stats, ID crosswalk, draft picks (maintained successor to nfl_data_py)
+requests>=2.32         # ESPN auction values, CollegeFootballData API
 beautifulsoup4>=4.12   # FantasyPros / news HTML parsing
 lxml>=5.2              # fast parser for BeautifulSoup
 
 # --- Modeling ---
-scikit-learn>=1.5
-xgboost>=2.1           # gradient-boosted projection models
+scikit-learn>=1.5      # HistGradientBoostingRegressor (projection + quantile floor/ceiling)
+scipy>=1.13            # rank correlation in backtest
 
 # --- Bounded narrative nudge (lightweight, free sentiment) ---
 vaderSentiment>=3.3

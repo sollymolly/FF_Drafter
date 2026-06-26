@@ -37,7 +37,11 @@ st.set_page_config(page_title="FF Drafter — Auction", layout="wide")
 # ---------------------------------------------------------------------------
 @st.cache_data(show_spinner=False)
 def load_board():
-    return store.load_board("baseline")
+    # Prefer the model board if it's been built; fall back to the baseline.
+    b = store.load_board("model")
+    if b is None:
+        b = store.load_board("baseline")
+    return b
 
 
 def persist(state: DraftState) -> None:
@@ -143,6 +147,8 @@ with st.sidebar:
 
 # ---- Main: header metrics ----
 st.title("FF Drafter — Live Auction")
+_src = board["source"].iloc[0] if "source" in board.columns and len(board) else "?"
+st.caption(f"Values: {'model blend (projections + market)' if _src == 'model_blend' else 'ESPN consensus (baseline)'}")
 m1, m2, m3, m4 = st.columns(4)
 m1.metric("Players sold", len(state.sales))
 m2.metric("$ in the room", f"${state.total_remaining_money()}")

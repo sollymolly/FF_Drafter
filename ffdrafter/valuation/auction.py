@@ -106,9 +106,70 @@ def build_baseline_board(market_df, league: dict = config.LEAGUE):
     return board
 
 
-def build_model_board(proj_df, league: dict = config.LEAGUE):
-    """Phase 4 board: VOR → dollars from our own projections (same schema)."""
-    df = compute_vor(proj_df, league)
-    df["value"] = _scale_to_budget(df["vor"], league)
-    df = assign_tiers(df, "value")
-    return _finalize(df)
+def build_model_board(proj_df, baseline_board, league: dict = config.LEAGUE,
+                      model_weight: float = 0.5):
+    """
+    Phase 4 board: blend our model with the market for a trust-anchored board.
+
+    Skill positions (QB/RB/WR/TE) get model dollars from VOR, calibrated to the same
+    total the market assigns those positions (so model$ and market$ are directly
+    comparable); DST/K carry the market value. Final value is
+        model_weight * model$ + (1 - model_weight) * market$.
+    Anchoring on the already-complete, calibrated baseline board keeps every player,
+    every column, and the league-money calibration intact, and prevents a single model
+    quirk (e.g. an over-extrapolated backup) from distorting the board.
+    """
+    import pandas as pd
+
+    skill = ("QB", "RB", "WR", "TE")
+    p = compute_vor(proj_df[proj_df["position"].isin(skill)].copy(), league)
+
+    # VOR / projection lookups by espn_id (preferred) then name_key (fallback).
+    p_e = p.dropna(subset=["espn_id"]).copy()
+    vor_by_espn = {int(e): float(v) for e, v in zip(p_e["espn_id"], p_e["vor"])}
+    vor_by_name, proj_by_name, rookie_by_name = {}, {}, {}
+    for _, r in p.iterrows():
+        nk = r["name_key"]
+        if nk not in vor_by_name:
+            vor_by_name[nk] = float(r["vor"])
+            proj_by_name[nk] = float(r.get("projected_pts", float("nan")))
+            rookie_by_name[nk] = bool(r.get("is_rookie", False))
+
+    def lookup(row, by_espn, by_name, default):
+        e = row.get("espn_id")
+        if pd.notna(e):
+            try:
+                ei = int(e)
+            except (TypeError, ValueError):
+                ei = None
+            if ei is not None and ei in by_espn:
+                return by_espn[ei]
+        return by_name.get(row.get("name_key"), default)
+
+    b = baseline_board.copy()
+    b["vor"] = b.apply(lambda r: lookup(r, vor_by_espn, vor_by_name, 0.0), axis=1)
+    b["projected_pts"] = b.apply(lambda r: lookup(r, {}, proj_by_name, float("nan")), axis=1)
+    b["is_rookie"] = b.apply(lambda r: lookup(r, {}, rookie_by_name, False), axis=1)
+
+    # Model dollars for skill, calibrated to the market's skill-money total.
+    skill_mask = b["position"].isin(skill)
+    skill_money = float(b.loc[skill_mask, "value"].sum())
+    n_skill = int(skill_mask.sum())
+    vsum = float(b.loc[skill_mask, "vor"].clip(lower=0).sum())
+    per = (skill_money - n_skill) / vsum if vsum > 0 else 0.0
+
+    b["market_value"] = b["value"].astype(int)
+    b["model_value"] = b["value"].astype(float)                 # default = market (DST/K)
+    b.loc[skill_mask, "model_value"] = 1 + b.loc[skill_mask, "vor"].clip(lower=0) * per
+
+    w = float(model_weight)
+    b["value"] = (w * b["model_value"] + (1 - w) * b["market_value"]).round().clip(lower=1).astype(int)
+    b = assign_tiers(b, "value")
+    b["source"] = "model_blend"
+
+    cols = BOARD_COLUMNS + ["projected_pts", "is_rookie", "model_value", "market_value"]
+    b = b.sort_values("value", ascending=False).reset_index(drop=True)
+    for c in cols:
+        if c not in b.columns:
+            b[c] = np.nan
+    return b[cols]
