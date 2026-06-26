@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Virtual envs
+.venv/
+venv/
+env/
+
+# Secrets
+.env
+
+# Generated data & live draft session (keep the folders, ignore contents)
+data/raw/*
+data/processed/*
+data/board/*
+data/session.json
+data/session.json.tmp
+!**/.gitkeep
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
