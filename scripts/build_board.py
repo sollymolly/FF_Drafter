@@ -12,6 +12,7 @@ toward the market for safety. Both share one schema, so the live app consumes ei
 """
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -46,13 +47,30 @@ def _load_or_build_projections(refresh: bool):
     return proj
 
 
+def _resolve_model_weight(override: float | None):
+    """CLI override wins; else learned per-position weights; else flat 0.5."""
+    if override is not None:
+        return override, f"model_weight={override:g}"
+    wpath = config.PATHS["processed"] / "blend_weights.json"
+    if wpath.exists():
+        payload = json.loads(wpath.read_text())
+        weights = payload["weights"]
+        logger.info("Learned blend weights from %s (backtest seasons %s)",
+                    wpath.name, payload.get("seasons"))
+        return weights, "learned " + " ".join(f"{p}:{w:g}" for p, w in weights.items())
+    logger.info("No blend_weights.json - flat 0.5 blend. "
+                "Run `python -m ffdrafter.model.blend` to learn weights.")
+    return 0.5, "model_weight=0.5 (default)"
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Build the valuation board.")
     ap.add_argument("--source", choices=["baseline", "model"], default="baseline",
                     help="baseline = ESPN AAV; model = our projections blended with market")
     ap.add_argument("--refresh", action="store_true", help="re-pull ESPN + retrain")
-    ap.add_argument("--model-weight", type=float, default=0.5,
-                    help="model vs market weight for the model board (0=market, 1=model)")
+    ap.add_argument("--model-weight", type=float, default=None,
+                    help="flat model-vs-market weight override (0=market, 1=model); "
+                         "default: learned per-position weights from blend_weights.json, else 0.5")
     ap.add_argument("--no-narrative", action="store_true",
                     help="skip the bounded news-sentiment nudge")
     args = ap.parse_args()
@@ -66,7 +84,8 @@ def main() -> None:
         if not args.no_narrative:
             from ffdrafter.model import narrative
             nudges = narrative.fetch_nudges(force_refresh=args.refresh)
-        board = auction.build_model_board(proj, baseline, model_weight=args.model_weight,
+        weight, weight_label = _resolve_model_weight(args.model_weight)
+        board = auction.build_model_board(proj, baseline, model_weight=weight,
                                           narrative_df=nudges)
         from ffdrafter.model import rookie_card
         rookie_card.build_rookie_cards(proj)
@@ -77,7 +96,7 @@ def main() -> None:
     store.save_board(board, name)
 
     lg = config.LEAGUE
-    label = f"{name} board" + (f" (model_weight={args.model_weight})" if name == "model" else "")
+    label = f"{name} board" + (f" ({weight_label})" if name == "model" else "")
     print(f"\n{label} - {lg['season']} | {lg['teams']}-team {lg['scoring']} | ${lg['budget']}/team")
     print(f"Players: {len(board)} | total ${int(board['value'].sum())} ~= league money "
           f"${config.total_money()}")

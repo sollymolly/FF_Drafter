@@ -107,14 +107,17 @@ def build_baseline_board(market_df, league: dict = config.LEAGUE):
 
 
 def build_model_board(proj_df, baseline_board, league: dict = config.LEAGUE,
-                      model_weight: float = 0.5, narrative_df=None):
+                      model_weight: float | dict = 0.5, narrative_df=None):
     """
     Phase 4 board: blend our model with the market for a trust-anchored board.
 
     Skill positions (QB/RB/WR/TE) get model dollars from VOR, calibrated to the same
     total the market assigns those positions (so model$ and market$ are directly
     comparable); DST/K carry the market value. Final value is
-        model_weight * model$ + (1 - model_weight) * market$.
+        w * model$ + (1 - w) * market$
+    where w is model_weight: a single float for the whole board, or a per-position
+    dict of learned weights (model/blend.py); positions missing from the dict get
+    w=0 (pure market).
     Anchoring on the already-complete, calibrated baseline board keeps every player,
     every column, and the league-money calibration intact, and prevents a single model
     quirk (e.g. an over-extrapolated backup) from distorting the board.
@@ -180,13 +183,17 @@ def build_model_board(proj_df, baseline_board, league: dict = config.LEAGUE,
     b["model_value"] = b["value"].astype(float)                 # default = market (DST/K)
     b.loc[skill_mask, "model_value"] = 1 + b.loc[skill_mask, "vor"].clip(lower=0) * per
 
-    w = float(model_weight)
+    if isinstance(model_weight, dict):
+        w = b["position"].map(model_weight).fillna(0.0).astype(float)
+    else:
+        w = float(model_weight)
+    b["model_weight"] = w
     b["value"] = (w * b["model_value"] + (1 - w) * b["market_value"]).round().clip(lower=1).astype(int)
     b = assign_tiers(b, "value")
     b["source"] = "model_blend"
 
     cols = BOARD_COLUMNS + ["projected_pts", "is_rookie", "model_value", "market_value",
-                            "narrative_reason", "narrative_mult"]
+                            "model_weight", "narrative_reason", "narrative_mult"]
     b = b.sort_values("value", ascending=False).reset_index(drop=True)
     for c in cols:
         if c not in b.columns:

@@ -65,19 +65,43 @@ pay for X?" card. State auto-saves after each sale, so a refresh/restart resumes
 
 ## How much to trust the model
 
-Backtested against held-out seasons, our projections roughly **tie** the strong "reuse last
-year's points" baseline (and the market) — they do not clearly beat it, and QB is the weakest
-spot. That's why the model board **blends with consensus** by default rather than trusting the
-model alone; raise `--model-weight` only as far as you trust it. The model's value is its
-*divergences* (where it sees an edge the market misses), tempered by that anchor.
+We backtest three forecasters on **the market's preseason top-200 skill players** (2021–2025)
+— the pool you actually draft from — and score each by rank correlation with what happened
+that season (mean across seasons):
+
+| position | model | naive (reuse last yr) | market (FantasyPros ECR) |
+|----------|:-----:|:---------------------:|:------------------------:|
+| QB | 0.20 | 0.32 | **0.40** |
+| RB | 0.43 | 0.40 | **0.58** |
+| WR | 0.46 | 0.45 | **0.58** |
+| TE | 0.25 | 0.25 | **0.42** |
+
+The **market clearly beats our model at every position** (and beats "reuse last year" too);
+the model only slightly edges naive at RB/WR and trails it at QB/TE. So the per-position blend
+weights — learned by `model/blend.py` to maximize held-out rank correlation — come out to
+**0 across the board**. The honest, data-driven verdict: *the current model shouldn't move
+prices.*
+
+What that means in practice:
+- `build_board.py --source model` loads these learned weights automatically, so the board's
+  **dollar values track the market** while each player still shows the model's `projected_pts`
+  beside them — a visible second opinion for spotting divergences, not a price driver.
+  `--model-weight X` still forces a flat blend if you want to experiment.
+- To make the model *worth* blending in, it needs better inputs than "last season's box score
+  + age": per-game/role stability, snap & target trends, vacated volume, and era-normalized
+  multi-year history. That's the next build phase.
+
+Rerun the evaluation anytime with `python -m ffdrafter.model.blend` (prints the full table and
+rewrites `data/processed/blend_weights.json`).
 
 ## Status
 
 **v1 complete.** Scaffold, baseline board, live Streamlit assistant, projection engine
 (nflverse data, veteran + rookie tracks, VOR→dollars, market-blended board, backtest), a
 bounded news-sentiment nudge (±10% cap, reason shown), and rookie deep-dive cards (draft
-capital + landing spot + historical comps). The model board defaults to a 50/50 model/market
-blend (`--model-weight`); the nudge can be skipped with `--no-narrative`.
+capital + landing spot + historical comps). The model board now uses **learned per-position
+blend weights** (`model/blend.py`; currently 0 — see "How much to trust the model"), with
+`--model-weight` as a manual override; the nudge can be skipped with `--no-narrative`.
 
 Planned refinements: College stats (CollegeFootballData) to sharpen rookies once a key is
 set; per-opponent nomination strategy; optional ESPN live-draft sync. v1 strategy scope is

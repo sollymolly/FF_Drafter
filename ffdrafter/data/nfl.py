@@ -86,11 +86,12 @@ def player_ids(force_refresh: bool = False):
     cache = PATHS["processed"] / "ff_playerids.parquet"
     if not force_refresh:
         cached = store.load_df(cache)
-        if cached is not None:
+        # Re-pull if the cache predates the fantasypros_id column (market backtest join).
+        if cached is not None and "fantasypros_id" in cached.columns:
             return cached
 
     ids = _to_pandas(nfl.load_ff_playerids())
-    keep = ["gsis_id", "espn_id", "name", "merge_name", "position", "team",
+    keep = ["gsis_id", "espn_id", "fantasypros_id", "name", "merge_name", "position", "team",
             "birthdate", "age", "draft_year", "draft_round", "draft_pick", "draft_ovr", "college"]
     ids = ids[[c for c in keep if c in ids.columns]].copy()
     ids["name_key"] = ids["name"].map(normalize_name)
