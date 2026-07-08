@@ -36,11 +36,11 @@ TARGET_SEASONS = (2021, 2022, 2023, 2024, 2025)
 def _veteran_preds(season_df, ids, target_season: int) -> pd.DataFrame:
     """Veteran model predictions for T, trained only on transitions <= T-1."""
     train = veteran.build_training_table(season_df, ids)
-    train = train[train["season"] <= target_season - 2]
-    models = project._train_by_position(train, veteran.FEATURES, "target_next",
-                                        min_rows=40, min_leaf=15)
+    train = train[train["season"] <= target_season - 2]   # no leakage of season T
+    models = project._train_veteran(train, veteran.FEATURES, min_rows=40, min_leaf=15)
     feat = veteran.build_projection_features(season_df, ids, base_season=target_season - 1)
-    pred = project._project_by_position(models, feat, veteran.FEATURES)
+    pred = project._project_veteran(models, feat, veteran.FEATURES,
+                                    target_games=veteran.season_games(target_season))
     if pred.empty:
         return pd.DataFrame(columns=["gsis_id", "projected_pts"])
     return pred[["player_id", "projected_pts"]].rename(columns={"player_id": "gsis_id"})

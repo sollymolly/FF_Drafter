@@ -99,6 +99,30 @@ class DraftState:
     def open_slots(self, manager: str) -> int:
         return self.roster_size - self.filled_slots(manager)
 
+    def filled_by_position(self, manager: str) -> dict:
+        """Count of players a manager has drafted at each position."""
+        from collections import Counter
+        return dict(Counter(s.position for s in self.sales_for(manager) if s.position))
+
+    def position_needs(self, manager: str) -> dict:
+        """
+        Open STARTER slots per position, flex-aware. A shared FLEX slot still open adds
+        demand to every flex-eligible position (RB/WR/TE), since any of them could fill
+        it — deliberately inclusive, because for nomination leverage we care whether a
+        manager might still bid on a position, not the exact slot they'd use.
+        Bench depth is intentionally ignored (weak demand).
+        """
+        filled = self.filled_by_position(manager)
+        slots = self.roster_slots
+        flex_positions = config.LEAGUE.get("flex_positions", ["RB", "WR", "TE"])
+        needs = {p: max(0, slots.get(p, 0) - filled.get(p, 0)) for p in config.SCORABLE_POSITIONS}
+        surplus = sum(max(0, filled.get(p, 0) - slots.get(p, 0)) for p in flex_positions)
+        flex_open = max(0, slots.get("FLEX", 0) - surplus)
+        if flex_open:
+            for p in flex_positions:
+                needs[p] += flex_open
+        return needs
+
     def max_bid(self, manager: str) -> int:
         """Most this manager can bid now: must reserve $1 for each OTHER open slot."""
         opens = self.open_slots(manager)

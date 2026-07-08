@@ -54,7 +54,8 @@ def season_stats(seasons, force_refresh: bool = False):
     cache = PATHS["processed"] / f"nfl_season_{min(seasons)}_{max(seasons)}.parquet"
     if not force_refresh:
         cached = store.load_df(cache)
-        if cached is not None:
+        # Re-pull if the cache predates the per-season `team` column (opportunity features).
+        if cached is not None and "team" in cached.columns:
             logger.info("Cached season stats: %d rows", len(cached))
             return cached
 
@@ -65,6 +66,7 @@ def season_stats(seasons, force_refresh: bool = False):
 
     keep = [
         "player_id", "player_display_name", "position", "season", "games",
+        "team", "recent_team",                       # per-season team (name varies by version)
         "completions", "attempts", "passing_yards", "passing_tds", "passing_interceptions",
         "carries", "rushing_yards", "rushing_tds",
         "receptions", "targets", "receiving_yards", "receiving_tds", "receiving_air_yards",
@@ -74,6 +76,8 @@ def season_stats(seasons, force_refresh: bool = False):
     ]
     out = raw[[c for c in keep if c in raw.columns]].rename(
         columns={"player_display_name": "name"})
+    if "team" not in out.columns and "recent_team" in out.columns:
+        out = out.rename(columns={"recent_team": "team"})
     out["name_key"] = out["name"].map(normalize_name)
     store.save_df(out, cache)
     return out
@@ -97,6 +101,32 @@ def player_ids(force_refresh: bool = False):
     ids["name_key"] = ids["name"].map(normalize_name)
     store.save_df(ids, cache)
     return ids
+
+
+def rosters(seasons, force_refresh: bool = False):
+    """Season-level rosters (gsis_id <-> team) — a cleaner membership source than
+    'who recorded stats', since a rostered-but-injured player still counts."""
+    import nflreadpy as nfl
+
+    seasons = list(seasons)
+    cache = PATHS["processed"] / f"rosters_{min(seasons)}_{max(seasons)}.parquet"
+    if not force_refresh:
+        cached = store.load_df(cache)
+        if cached is not None:
+            return cached
+
+    logger.info("Pulling nflverse rosters %s..%s ...", min(seasons), max(seasons))
+    try:
+        raw = _to_pandas(nfl.load_rosters(seasons=seasons))
+    except Exception as e:  # keep the pipeline running on network hiccups
+        logger.warning("roster pull failed (%s) — membership falls back to stats.", e)
+        return None
+
+    keep = ["season", "team", "position", "gsis_id", "status", "full_name"]
+    out = raw[[c for c in keep if c in raw.columns]].rename(columns={"gsis_id": "player_id"})
+    out = out.dropna(subset=["player_id", "team"]).copy()
+    store.save_df(out, cache)
+    return out
 
 
 def draft_class(season: int, force_refresh: bool = False):

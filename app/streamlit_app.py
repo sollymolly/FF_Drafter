@@ -125,13 +125,14 @@ with st.sidebar:
     st.divider()
     st.subheader("Managers")
     st.dataframe(
-        panel[["manager", "budget_left", "open_slots", "max_bid"]]
+        panel[["manager", "budget_left", "open_slots", "max_bid", "needs"]]
         .sort_values("budget_left", ascending=False),
         hide_index=True, width="stretch",
         column_config={
             "budget_left": st.column_config.NumberColumn("Budget", format="$%d"),
             "max_bid": st.column_config.NumberColumn("Max bid", format="$%d"),
             "open_slots": st.column_config.NumberColumn("Open"),
+            "needs": st.column_config.TextColumn("Needs"),
         },
     )
 
@@ -243,6 +244,28 @@ with right:
     else:
         st.caption("No players yet.")
 
+
+# ---- Nomination strategy (full width) ----
+st.divider()
+st.subheader("🎯 Who to nominate")
+st.caption("Auction leverage: **nominate players your opponents still need and can pay for** "
+           "to drain their budgets, and **hold the players you want** until the room's money "
+           "thins. `Demand` = opponents who still need that position *and* can afford the price; "
+           "your own targets are pushed down the list.")
+nom = engine.nomination_board(state, board, n=15, factor=factor)
+if nom is not None and len(nom):
+    st.dataframe(
+        nom, hide_index=True, width="stretch",
+        column_config={
+            "inflated_value": st.column_config.NumberColumn("Price~", format="$%d"),
+            "opp_demand": st.column_config.NumberColumn("Demand"),
+            "opp_need": st.column_config.NumberColumn("Need"),
+            "opp_can_afford": st.column_config.NumberColumn("CanPay"),
+            "nominate_score": st.column_config.NumberColumn("Score", format="%d"),
+        },
+    )
+else:
+    st.caption("No available players to evaluate yet.")
 
 # ---- Rookie deep-dive (full width) ----
 cards = load_rookie_cards()
