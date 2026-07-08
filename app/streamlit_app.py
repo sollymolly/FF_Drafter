@@ -210,6 +210,9 @@ with left:
             notes.append("🎓 rookie — see deep-dive below")
         if rec["last_in_tier"]:
             notes.append("⚠️ **last player in this tier** — a small premium is justified")
+        if "edge" in rec:
+            notes.append(f"our board ${rec['board_value']} vs market ${rec['market_value']} "
+                         f"(edge {rec['edge']:+d}, trust {rec['trust'] * 100:.0f}%)")
         st.caption("  |  ".join(notes))
         if rec.get("narrative_reason"):
             st.caption(f"📰 {rec['narrative_reason']}")
@@ -227,6 +230,8 @@ with right:
             "inflated_value": st.column_config.NumberColumn("Adj", format="$%d"),
             "my_max_bid": st.column_config.NumberColumn("MyMax", format="$%d"),
             "opp_can_afford": st.column_config.NumberColumn("Opp$"),
+            "edge": st.column_config.NumberColumn("Edge", format="$%+d",
+                                                  help="model $ − market $ (model board only)"),
             "aav": st.column_config.NumberColumn("AAV", format="%.0f"),
             "adp": st.column_config.NumberColumn("ADP", format="%.0f"),
         },
@@ -266,6 +271,35 @@ if nom is not None and len(nom):
     )
 else:
     st.caption("No available players to evaluate yet.")
+
+# ---- Model vs Market edges (full width) ----
+if "model_value" in board.columns:
+    st.divider()
+    st.subheader("📊 Model vs Market edges")
+    only_trusted = st.checkbox(
+        "Only positions the model earns trust (TE/WR/QB)", value=True,
+        help="Hide positions with a learned blend weight of 0 (e.g. RB), where the model's "
+             "disagreement is informational only and does not move the board price.")
+    st.caption("**edge = our board $ − market $** — how far our (model-blended) price sits off "
+               "consensus, *after* applying the learned trust. Positive → we value him above "
+               "market (target); negative → market may be overpaying. **trust** = the blend "
+               "weight driving it (RB = 0, so RB shows no edge — the model isn't trusted there).")
+    edges = engine.value_edges(state, board, n=25, only_trusted=only_trusted)
+    if edges is not None and len(edges):
+        edges_disp = edges.assign(edge_pct=edges["edge_pct"] * 100, trust=edges["trust"] * 100)
+        st.dataframe(
+            edges_disp, hide_index=True, width="stretch", height=380,
+            column_config={
+                "market_value": st.column_config.NumberColumn("Market $", format="$%d"),
+                "board_value": st.column_config.NumberColumn("Our $", format="$%d"),
+                "edge": st.column_config.NumberColumn("Edge", format="$%+d"),
+                "edge_pct": st.column_config.NumberColumn("Edge %", format="%+.0f%%"),
+                "trust": st.column_config.NumberColumn("Trust", format="%.0f%%"),
+                "direction": st.column_config.TextColumn("Read"),
+            },
+        )
+    else:
+        st.caption("No divergences to show for the current filter.")
 
 # ---- Rookie deep-dive (full width) ----
 cards = load_rookie_cards()

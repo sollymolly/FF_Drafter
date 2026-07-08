@@ -19,39 +19,58 @@ from ffdrafter.utils import get_logger
 logger = get_logger(__name__)
 
 ROOKIE_FEATURES = ["draft_ovr", "log_draft_ovr", "draft_round", "age"]
-
-
-def _draft_lookup(ids):
-    """gsis_id -> (draft_year, draft_ovr, draft_round) from the crosswalk."""
-    cols = ["gsis_id", "draft_year", "draft_ovr", "draft_round"]
-    d = ids[[c for c in cols if c in ids.columns]].dropna(subset=["gsis_id"]).copy()
-    return d
+SKILL = ("QB", "RB", "WR", "TE")
 
 
 def build_rookie_training(season_df, ids):
     """
-    Historical rookie seasons: a player's stat line in the season equal to their
-    draft year. Features = draft capital (+ age); target = that season's points.
+    Every drafted skill player's ROOKIE season — including the ones who never played
+    (target_rookie = 0).
+
+    SURVIVORSHIP FIX: this used to start from the stat lines and inner-join draft
+    capital, which silently dropped every drafted rookie who never recorded a season.
+    The model therefore learned that every drafted rookie produces, and projected the
+    incoming class too optimistically. We now start from the DRAFT CLASS and LEFT-join
+    the rookie-season stats, so busts stay in the pool scoring 0.
+
+    Draft classes are restricted to seasons covered by season_df, so a missing stat
+    line unambiguously means "did not play", never "not collected yet".
     """
     import pandas as pd
 
-    draft = _draft_lookup(ids)
-    df = season_df.merge(draft, left_on="player_id", right_on="gsis_id", how="inner")
-    # A rookie season = the season that equals the player's draft year.
-    rookies = df[df["season"] == df["draft_year"]].copy()
+    lo, hi = int(season_df["season"].min()), int(season_df["season"].max())
+
+    d = ids.dropna(subset=["gsis_id", "draft_year"]).copy()
+    d["draft_year"] = pd.to_numeric(d["draft_year"], errors="coerce")
+    d = d[d["draft_year"].between(lo, hi)].drop_duplicates("gsis_id")
+    d["season"] = d["draft_year"].astype(int)   # a rookie season == the draft year
+    d = d.rename(columns={"position": "position_listed"})
+
+    stats = (season_df[["player_id", "season", "position", "fantasy_points_league"]]
+             .rename(columns={"player_id": "gsis_id", "position": "position_played"}))
+    r = d.merge(stats, on=["gsis_id", "season"], how="left")
+
+    # Prefer the position he actually played; fall back to his draft listing, which is
+    # all a never-played bust has. Filtering on the listing alone would drop producers
+    # whose listed position differs from where they lined up.
+    r["position"] = r["position_played"].fillna(r["position_listed"])
+    r = r[r["position"].isin(SKILL)].drop(columns=["position_played", "position_listed"])
+    r["target_rookie"] = r["fantasy_points_league"].fillna(0.0)
 
     by = ids.dropna(subset=["gsis_id"]).copy()
     by["birth_year"] = pd.to_datetime(by["birthdate"], errors="coerce").dt.year
     birth = dict(zip(by["gsis_id"], by["birth_year"]))
-    rookies["age"] = rookies["season"] - rookies["player_id"].map(birth)
+    r["age"] = r["season"] - r["gsis_id"].map(birth)
 
-    rookies["draft_ovr"] = rookies["draft_ovr"].fillna(260)  # undrafted ~ after last pick
-    rookies["log_draft_ovr"] = np.log(rookies["draft_ovr"].clip(lower=1))
-    rookies["target_rookie"] = rookies["fantasy_points_league"]
+    r["draft_ovr"] = r["draft_ovr"].fillna(260)  # undrafted ~ after last pick
+    r["log_draft_ovr"] = np.log(r["draft_ovr"].clip(lower=1))
 
-    logger.info("Rookie training rows: %d (drafted skill players with a rookie season)",
-                len(rookies))
-    return rookies
+    # "played" == has a stat line. Do NOT use target_rookie > 0: a rookie can play and
+    # still score <= 0 (fumbles/INTs), which is a bust, not an absence.
+    played = int(r["fantasy_points_league"].notna().sum())
+    logger.info("Rookie training rows: %d drafted skill players (%d played, %d never played)",
+                len(r), played, len(r) - played)
+    return r
 
 
 def build_rookie_features(draft_class_df, ids):

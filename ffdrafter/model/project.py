@@ -32,6 +32,14 @@ SKILL = ("QB", "RB", "WR", "TE")
 BANDS = {"floor": 0.20, "ceiling": 0.80}
 RATE_MIN_GAMES = 4       # need enough games for a stable PPG target
 
+# Positions projected from a DIRECT total-points target instead of rate x availability.
+# MEASURED, DO NOT "FIX" BACK: a direct-total head for QB looks tempting (before the
+# opportunity-context features existed, splitting rate x availability dropped QB rank
+# correlation 0.20 -> 0.14). But WITH those context features the split is what makes QB
+# work (rho 0.26); forcing QB back to a direct total collapses it to 0.12. Left empty
+# deliberately — the mechanism stays available should a position ever warrant it.
+DIRECT_TOTAL_POSITIONS: tuple[str, ...] = ()
+
 
 def _fit_models(X, y, min_leaf: int = 15):
     """Central projection via mean (squared_error, less top-compression on skewed
@@ -52,11 +60,23 @@ def _fit_avail(X, y, min_leaf: int = 20):
 
 
 def _train_veteran(train, feature_cols, min_rows: int = 40, min_leaf: int = 15):
-    """Per position: a PPG rate model (players who played N+1) + an availability
-    model (full pool, so wash-outs teach decline risk)."""
+    """
+    Per position, either:
+      DIRECT_TOTAL_POSITIONS -> one quantile model on next-season TOTAL points
+                                (full pool; non-returners carry pts_next = 0);
+      everything else        -> a PPG rate model (players who actually played N+1)
+                                plus an availability model (full pool, so wash-outs
+                                teach decline risk).
+    """
     out = {}
     for pos in SKILL:
         d = train[train["position"] == pos]
+        if pos in DIRECT_TOTAL_POSITIONS:
+            if len(d) < min_rows:
+                continue
+            out[pos] = {"total": _fit_models(d[feature_cols], d["pts_next"], min_leaf=min_leaf)}
+            logger.info("  %s: direct total on %d (full pool)", pos, len(d))
+            continue
         rate_d = d[d["games_next"] >= RATE_MIN_GAMES].dropna(subset=["ppg_next"])
         if len(rate_d) < min_rows:
             continue
@@ -69,21 +89,30 @@ def _train_veteran(train, feature_cols, min_rows: int = 40, min_leaf: int = 15):
 
 
 def _project_veteran(models_by_pos, feat_df, feature_cols, target_games: int):
-    """Combine rate x availability into projected_pts + floor/ceiling for target_games."""
+    """Project each position with whichever head it was trained under (see _train_veteran)."""
     rows = []
     for pos, m in models_by_pos.items():
         d = feat_df[feat_df["position"] == pos].copy()
         if d.empty:
             continue
         X = d[feature_cols]
-        ppg = {k: np.clip(mm.predict(X), 0, None) for k, mm in m["rate"].items()}
-        exp_games = np.clip(m["avail"].predict(X), 0, 1) * target_games
-        med = ppg["projected_pts"]
-        d["ppg_proj"] = med
-        d["exp_games"] = exp_games
-        d["projected_pts"] = med * exp_games
-        d["floor"] = np.minimum(ppg["floor"], med) * exp_games
-        d["ceiling"] = np.maximum(ppg["ceiling"], med) * exp_games
+        if "total" in m:                       # direct total-points head (QB)
+            tot = {k: np.clip(mm.predict(X), 0, None) for k, mm in m["total"].items()}
+            med = tot["projected_pts"]
+            d["ppg_proj"] = med / max(target_games, 1)
+            d["exp_games"] = np.nan            # availability not modelled for this head
+            d["projected_pts"] = med
+            d["floor"] = np.minimum(tot["floor"], med)
+            d["ceiling"] = np.maximum(tot["ceiling"], med)
+        else:                                  # rate x availability head
+            ppg = {k: np.clip(mm.predict(X), 0, None) for k, mm in m["rate"].items()}
+            exp_games = np.clip(m["avail"].predict(X), 0, 1) * target_games
+            med = ppg["projected_pts"]
+            d["ppg_proj"] = med
+            d["exp_games"] = exp_games
+            d["projected_pts"] = med * exp_games
+            d["floor"] = np.minimum(ppg["floor"], med) * exp_games
+            d["ceiling"] = np.maximum(ppg["ceiling"], med) * exp_games
         rows.append(d)
     return pd.concat(rows, ignore_index=True) if rows else pd.DataFrame()
 

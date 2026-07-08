@@ -69,6 +69,11 @@ def last_in_tier(state, board, name_key: str) -> bool:
     return len(same_tier) <= 1
 
 
+def _has_model_view(board) -> bool:
+    """True on a model board, which carries the raw model $ and market $ per player."""
+    return "model_value" in board.columns and "market_value" in board.columns
+
+
 def best_available(state, board, n: int = 25, position: str | None = None,
                    factor: float | None = None) -> pd.DataFrame:
     """Top remaining players by inflation-adjusted value, annotated for the table."""
@@ -81,8 +86,10 @@ def best_available(state, board, n: int = 25, position: str | None = None,
     av = av.nlargest(n, "inflated_value")
     av["my_max_bid"] = state.max_bid(state.my_team)
     av["opp_can_afford"] = av["inflated_value"].apply(lambda p: affordability(state, int(p)))
+    if _has_model_view(av):
+        av["edge"] = (av["value"] - av["market_value"].round()).astype(int)
     cols = ["name", "position", "team", "value", "inflated_value",
-            "my_max_bid", "opp_can_afford", "tier", "aav", "adp"]
+            "my_max_bid", "opp_can_afford", "edge", "tier", "aav", "adp"]
     return av[[c for c in cols if c in av.columns]].reset_index(drop=True)
 
 
@@ -98,7 +105,7 @@ def recommend_player(state, board, name: str, factor: float | None = None) -> di
     base = int(r["value"])
     inflated = max(1, round(base * factor))
     my_max = state.max_bid(state.my_team)
-    return {
+    rec = {
         "name": r["name"],
         "position": r["position"],
         "team": r["team"],
@@ -113,6 +120,51 @@ def recommend_player(state, board, name: str, factor: float | None = None) -> di
         "narrative_reason": r.get("narrative_reason"),
         "is_rookie": bool(r.get("is_rookie")) if pd.notna(r.get("is_rookie")) else False,
     }
+    if _has_model_view(board):
+        rec.update(_edge_fields(r))
+    return rec
+
+
+def _edge_fields(r) -> dict:
+    """Market $ vs our (blended) board $ for one row, the gap, and the trust weight."""
+    mkt = int(round(float(r["market_value"])))
+    board_v = int(round(float(r["value"])))
+    trust = float(r["model_weight"]) if "model_weight" in r and pd.notna(r.get("model_weight")) else 0.0
+    return {"market_value": mkt, "edge": board_v - mkt, "trust": trust}
+
+
+def value_edges(state, board, n: int = 25, only_trusted: bool = False) -> pd.DataFrame | None:
+    """
+    Available players ranked by how far OUR board price diverges from the market's — the
+    tool's actual differentiator. `edge = board_value - market_value` is the *effective*
+    divergence: the blended board already applies the learned per-position trust, so this
+    is exactly how much our recommendation moves off consensus (and why).
+      edge > 0  we value him ABOVE market (a value to target);
+      edge < 0  we value him BELOW market (the market may be overpaying).
+    We deliberately do NOT surface the raw model dollar: its VOR->$ pooling is miscalibrated
+    across positions (inflates QB, deflates WR in a 1-QB league), so the raw gap is an
+    artifact, not signal. `trust` = learned blend weight (0 at RB, so RB shows no edge).
+    Returns None on a baseline board, which has no model view.
+    """
+    if not _has_model_view(board):
+        return None
+    av = available(board, state)
+    if av.empty:
+        return av
+    av = av.copy()
+    av["market_value"] = av["market_value"].round().astype(int)
+    av["board_value"] = av["value"].astype(int)
+    av["edge"] = av["board_value"] - av["market_value"]
+    av["edge_pct"] = av["edge"] / av["market_value"].clip(lower=1)
+    av["trust"] = av["model_weight"].fillna(0.0) if "model_weight" in av.columns else 0.0
+    if only_trusted:
+        av = av[av["trust"] > 0]
+    av["direction"] = np.where(av["edge"] > 0, "value — above market",
+                               np.where(av["edge"] < 0, "fade — below market", "—"))
+    av = av.reindex(av["edge"].abs().sort_values(ascending=False, kind="stable").index)
+    cols = ["name", "position", "team", "market_value", "board_value",
+            "edge", "edge_pct", "trust", "tier", "direction"]
+    return av[[c for c in cols if c in av.columns]].head(n).reset_index(drop=True)
 
 
 def nomination_board(state, board, n: int = 15, factor: float | None = None) -> pd.DataFrame:
