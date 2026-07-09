@@ -44,6 +44,35 @@ LEAGUE = {
     "flex_positions": ["RB", "WR", "TE"],
 }
 
+# ---------------------------------------------------------------------------
+# LEAGUE PRICE CURVE — calibrate board dollars to how YOUR room actually pays.
+# ESPN's AAV shape is averaged over thousands of (mostly soft) leagues and is too
+# flat at the top: competitive rooms pay a stars premium (a linear AAV rescale
+# put the 2024 #1 at ~$62; the room paid $95). At board build the top ranks are
+# pinned to `targets` (rank 1..N prices), the next ~N ranks taper geometrically
+# to wherever the sagged curve sits (no cliff), and everyone else's above-$1
+# money is rescaled so the pool still sums to league money: mids sag, the tail
+# compresses to the $1 floor — zero-sum by construction.
+#
+# `targets` is FITTED TO THIS LEAGUE'S ACTUAL 2024 AUCTION (160 sales, $1,991):
+#   ranks 1-30 carry 73% of the room's money, so all 30 are pinned (top-3 steep:
+#   95/85/79; a ~$70 cluster through rank 8; then a smooth slide — no plateau,
+#   no cliff). Values are a centered 3-rank rolling mean of the raw prices to
+#   de-noise single ranks (e.g. three straight $51s were one bidding war).
+#   Below rank 30 the data is thin ($1-25) and the taper + zero-sum sag track it
+#   within ~$2, so it stays shape-based. ONE YEAR of data — refit when another
+#   season exists. Set `targets` to None to fall back to the two-point band
+#   (top1/topn), or all to None for the flat market shape.
+# ---------------------------------------------------------------------------
+PRICE_CURVE = {
+    "targets": [95, 86, 79, 74, 71, 70, 68, 64, 58, 53,    # ranks 1-10
+                51, 51, 50, 49, 48, 46, 44, 40, 37, 34,    # ranks 11-20
+                34, 33, 32, 31, 29, 29, 28, 27, 26, 25],   # ranks 21-30
+    "top_n": 10,          # band width for the top1/topn fallback below
+    "top1_target": None,  # two-point fallback when no fitted targets exist
+    "topn_target": None,
+}
+
 # Positions that score fantasy points (everything we value).
 SCORABLE_POSITIONS = ("QB", "RB", "WR", "TE", "DST", "K")
 

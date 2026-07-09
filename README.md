@@ -73,6 +73,12 @@ chasing — never past a price you'd regret winning at. Nominations are weighted
 teams shopping with house money first. Knobs live in `config.THREAT`; sanity-check offline
 with `python scripts/sanity_threat.py [--app]`.
 
+Board dollars are also calibrated to **your room's price curve** (`config.PRICE_CURVE`):
+competitive rooms pay a stars premium ESPN's averaged AAV shape misses, so the top-10 pin to
+the observed $80-90 plateau, the ranks just below taper smoothly (no cliff), and the mid tier
+sags zero-sum — the pool still sums to league money. Set the targets to `None` to keep the
+flat market shape.
+
 ## How much to trust the model
 
 We backtest three forecasters on **the market's preseason top-200 skill players** (2021–2025)

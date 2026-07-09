@@ -220,7 +220,7 @@ def assess_player(state, board, name: str, factor: float | None = None,
     return {
         "expected_price": exp_price,
         "cost_to_win": int(cost_to_win),
-        "threats": threats[:3],
+        "threats": threats,          # full list, most threatening first; UI slices
         "top_threat": top["manager"] if top else None,
         "scarcity_premium": scarcity,
         "rivalry_premium": rivalry,

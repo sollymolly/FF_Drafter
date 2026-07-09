@@ -274,19 +274,41 @@ with left:
                          f"(edge {rec['edge']:+d}, trust {rec['trust'] * 100:.0f}%)")
         st.caption("  |  ".join(notes))
         if rec.get("threats"):
-            tt = " · ".join(f"**{t['manager']}** → ~${t['willingness']} "
-                            f"(edge {t['edge_vs_room']:+d} vs room, ${max(t['surplus'], 0)} to burn)"
-                            for t in rec["threats"])
-            st.caption(f"⚔️ Likely bidders: {tt}  —  beating them today ≈ **${rec['cost_to_win']}**")
+            st.markdown("**⚔️ Threatening teams** — most to least, and what they'd pay:")
+            tdf = pd.DataFrame(rec["threats"][:5])
+            tdf.insert(0, "rank", range(1, len(tdf) + 1))
+            st.dataframe(
+                tdf[["rank", "manager", "willingness", "edge_vs_room", "surplus"]],
+                hide_index=True, width="stretch",
+                column_config={
+                    "rank": st.column_config.NumberColumn("#", width="small"),
+                    "manager": st.column_config.TextColumn("Team"),
+                    "willingness": st.column_config.NumberColumn(
+                        "Would pay ~", format="$%d",
+                        help="Their realistic ceiling: adjusted value + a share of their "
+                             "threat money (spare cash + banked edge over the room), "
+                             "capped by their max bid."),
+                    "edge_vs_room": st.column_config.NumberColumn(
+                        "Edge vs room", format="$%+d",
+                        help="How far their banked value sits above the room average — "
+                             "how strong their draft has been so far."),
+                    "surplus": st.column_config.NumberColumn(
+                        "Spare $", format="$%d",
+                        help="Money beyond realistically finishing their roster."),
+                },
+            )
+            adj = (f"your walk-away is lifted to **${rec['suggested_max']}** "
+                   f"(+${rec['premium']} premium)" if rec.get("premium")
+                   else f"your walk-away stays **${rec['suggested_max']}**")
+            st.caption(f"⚔️ Beating the room today ≈ **${rec['cost_to_win']}** — {adj}.")
         if rec.get("premium"):
             parts = []
             if rec.get("scarcity_premium"):
                 parts.append(f"${rec['scarcity_premium']} tier-cliff insurance")
             if rec.get("rivalry_premium"):
                 parts.append(f"${rec['rivalry_premium']} denial vs **{rec['top_threat']}**")
-            st.caption(f"💰 Premium +${rec['premium']} over the adjusted price "
-                       f"({' + '.join(parts)}; capped at ${rec['premium_cap']}) — "
-                       f"the priced-in risk of NOT getting him.")
+            st.caption(f"💰 Premium breakdown: {' + '.join(parts)}; capped at "
+                       f"${rec['premium_cap']} — the priced-in risk of NOT getting him.")
         if rec.get("narrative_reason"):
             st.caption(f"📰 {rec['narrative_reason']}")
 

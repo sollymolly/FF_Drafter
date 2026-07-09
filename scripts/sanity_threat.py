@@ -31,18 +31,23 @@ from ffdrafter.draft.state import DraftState
 from ffdrafter.utils import normalize_name
 
 
-def curve(top, tail_start, n):
+def curve(top, tail_start, n, decay=0.88):
     """AAV curve: explicit elite prices, then a smooth geometric tail (floor $1)."""
     vals = list(top)
     v = float(tail_start)
     while len(vals) < n:
         vals.append(max(1, int(round(v))))
-        v *= 0.88
+        v *= decay
     return vals
 
 
 def synthetic_market() -> pd.DataFrame:
-    """Market frame with deliberate elite duos (tier-1 cliffs) for scarcity tests."""
+    """
+    Market frame with deliberate elite duos (tier-1 cliffs) for scarcity tests.
+    The duos need a wide AAV moat below them: rank-pinning (PRICE_CURVE targets)
+    prices players by OVERALL rank, so a position with 3+ players inside the
+    pinned zone gets smooth within-position prices and no tier cliff survives.
+    """
     entries, eid = [], [1000]
 
     def pos_curve(pos, names, aavs):
@@ -52,11 +57,11 @@ def synthetic_market() -> pd.DataFrame:
                                 position=pos, team="XX", aav=float(a)))
 
     pos_curve("RB", ["Jahmyr Gibbs", "Bijan Robinson"] + [f"RB Guy {i}" for i in range(38)],
-              curve([75, 70], 55, 40))
+              curve([61, 59], 24, 40, decay=0.93))
     pos_curve("WR", ["CeeDee Lamb", "Puka Nacua"] + [f"WR Guy {i}" for i in range(38)],
-              curve([70, 66], 52, 40))
-    pos_curve("QB", [f"QB Guy {i}" for i in range(16)], curve([42], 34, 16))
-    pos_curve("TE", [f"TE Guy {i}" for i in range(14)], curve([34], 26, 14))
+              curve([57, 56], 22, 40, decay=0.93))
+    pos_curve("QB", [f"QB Guy {i}" for i in range(16)], curve([42], 20, 16))
+    pos_curve("TE", [f"TE Guy {i}" for i in range(14)], curve([34], 15, 14))
     pos_curve("DST", [f"DST Unit {i}" for i in range(14)], [1] * 14)
     pos_curve("K", [f"Kicker {i}" for i in range(14)], [1] * 14)
     pos_curve("RB", [f"Deep RB {i}" for i in range(30)], [1] * 30)
@@ -64,14 +69,34 @@ def synthetic_market() -> pd.DataFrame:
     return pd.DataFrame(entries)
 
 
-def mk_board():
+def mk_board(league):
     from ffdrafter.valuation.auction import build_baseline_board
-    return build_baseline_board(synthetic_market())
+    return build_baseline_board(synthetic_market(), league)
 
 
 def run_engine_checks():
-    board = mk_board()
-    state = DraftState.new("Me", [f"Opp{i}" for i in range(1, 12)])
+    # A 10-team room like the real league: with the stars premium, budgets must
+    # leave space for a second stud — in a 12-team $200 room they don't.
+    league10 = {**config.LEAGUE, "teams": 10}
+    board = mk_board(league10)
+    state = DraftState.new("Me", [f"Opp{i}" for i in range(1, 10)], league=league10)
+
+    # ---------- league price curve pins the fitted targets ----------
+    pc = getattr(config, "PRICE_CURVE", {}) or {}
+    tgt = pc.get("targets") or (
+        list(__import__("numpy").linspace(pc["top1_target"], pc["topn_target"],
+                                          int(pc.get("top_n", 10))))
+        if pc.get("top1_target") and pc.get("topn_target") else None)
+    if tgt:
+        top = board["value"].nlargest(len(tgt))
+        for got, want in zip(top.tolist(), tgt):
+            assert abs(got - want) <= 1, f"target miss: ${got} vs ${want}"
+        ranked = board["value"].sort_values(ascending=False).reset_index(drop=True)
+        assert ranked.is_monotonic_decreasing
+        assert ranked.iloc[len(tgt)] >= 0.75 * tgt[-1], \
+            f"cliff below the band: rank-{len(tgt)+1} price ${ranked.iloc[len(tgt)]}"
+        print(f"price curve OK   top-{len(tgt)} pinned ${int(top.iloc[0])}→${int(top.iloc[-1])} "
+              f"(avg ${top.mean():.0f}), rank-{len(tgt)+1} ${int(ranked.iloc[len(tgt)])} — no cliff")
 
     def val(nm):
         return int(board.loc[board["name_key"] == normalize_name(nm), "value"].iloc[0])
@@ -128,7 +153,7 @@ def run_engine_checks():
     print("   threats:", r1["threats"])
 
     # mid-tier player: star_factor keeps uplift and premium negligible
-    r_mid = engine.recommend_player(state, board, "WR Guy 5", factor=f1)
+    r_mid = engine.recommend_player(state, board, "WR Guy 15", factor=f1)
     assert r_mid["premium"] <= 3, f"no meaningful premium on a mid player, got {r_mid['premium']}"
     print("mid player OK   ",
           {k: r_mid[k] for k in ("inflated_value", "expected_price", "premium", "suggested_max")})

@@ -38,21 +38,85 @@ def _scale_to_budget(values, league: dict):
     Given a non-negative value signal (AAV or VOR) per player, return integer
     auction dollars: $1 base for everyone plus a share of discretionary money,
     calibrated so the draftable pool sums to ~total league money.
+
+    LEAGUE PRICE CURVE (config.PRICE_CURVE): the linear allocation preserves the
+    signal's shape, and ESPN AAV's shape is too flat at the top for a competitive
+    room. But the real correction is a PLATEAU, not a power curve: this league's
+    top ~10 clear $80-90 (a compressed band — willingness saturates well below
+    half a budget, so nobody pays $118 for the #1 either), the mid tier sells
+    UNDER the flat board, and the tail goes $1-2. So when targets are set we pin
+    the top `top_n` dollars to a rank-linear band (top1_target -> topn_target)
+    and rescale every other player's above-$1 money so the pool still sums to
+    league money: the mid tier sags and the tail compresses toward the floor —
+    exactly the observed zero-sum reshape.
     """
     teams = league["teams"]
     budget = league["budget"]
     rsize = config.roster_size(league)
     n_pool = teams * rsize
+    money = teams * budget
 
     v = values.clip(lower=0)
     pool_sum = float(v.sort_values(ascending=False).head(n_pool).sum())
     discretionary = teams * (budget - rsize)
     per_unit = (discretionary / pool_sum) if pool_sum > 0 else 0.0
+    dollars = 1 + v * per_unit                      # linear market shape (floats)
 
-    dollars = (1 + v * per_unit).round().clip(lower=1).astype(int)
+    curve = getattr(config, "PRICE_CURVE", {}) or {}
+    t_list, t1, tn = curve.get("targets"), curve.get("top1_target"), curve.get("topn_target")
+    if t_list:                       # per-rank prices fitted from league history
+        targets = np.asarray(t_list, dtype=float)
+    elif t1 and tn:                  # two-point band when no history exists
+        targets = np.linspace(float(t1), float(tn), num=int(curve.get("top_n", 10)))
+    else:
+        targets = None
+    if targets is not None and len(dollars) > len(targets):
+        top_n = len(targets)
+        order = dollars.sort_values(ascending=False).index
+        top_idx, rest_idx = order[:top_n], order[top_n:]
+        # Money the plateau adds must come out of the rest of the pool, pro-rata
+        # above the $1 floor ($30 players sag by dollars, $2 players barely move)
+        # — EXCEPT that a hard pin would leave a cliff at rank top_n+1 (an $80
+        # player next to a near-equal $35 one). The next `top_n` ranks instead
+        # taper geometrically from the band's bottom down to wherever the sagged
+        # curve naturally sits, and the sag rescales to fund the taper too.
+        band_lo = float(targets[-1])
+        rest_extra = (dollars.loc[rest_idx] - 1).clip(lower=0)   # rank order, above-floor $
+        n_rest_pool = max(0, n_pool - top_n)
+        rest_budget = money - float(targets.sum()) - n_rest_pool  # above-floor $ the rest may keep
+        K = min(top_n, len(rest_idx))
+
+        def rest_prices(s: float) -> pd.Series:
+            base = 1 + rest_extra * s
+            if K and band_lo > float(base.iloc[K - 1]):
+                anchor = max(float(base.iloc[K - 1]), 1.0)
+                phi = (anchor / band_lo) ** (1.0 / K)
+                bridge = band_lo * phi ** np.arange(1, K + 1)
+                base.iloc[:K] = np.maximum(base.iloc[:K].to_numpy(), bridge)
+            return base
+
+        pool_extra = float(rest_extra.iloc[:n_rest_pool].sum())
+        s = (rest_budget / pool_extra) if pool_extra > 0 else 0.0
+        s = max(0.0, s)
+        for _ in range(8):   # fixed point: conserve pool money including the taper
+            spent = float((rest_prices(s).iloc[:n_rest_pool] - 1).sum())
+            if spent <= 0 or abs(spent - rest_budget) < 1:
+                break
+            s = max(0.0, s * rest_budget / spent)
+        if s <= 0:
+            logger.warning("Price-curve targets absorb the whole pool — "
+                           "check top1/topn_target vs league money")
+        priced = rest_prices(s)
+        dollars.loc[rest_idx] = priced
+        dollars.loc[top_idx] = targets
+        logger.info("Price curve: top-%d pinned $%.0f→$%.0f, taper to $%.0f by rank %d, "
+                    "rest scaled ×%.2f", top_n, float(targets[0]), band_lo,
+                    float(priced.iloc[K - 1]) if K else band_lo, top_n + K, s)
+
+    out = dollars.round().clip(lower=1).astype(int)
     logger.info("$%.2f per value-unit over top %d players (pool signal=%.0f)",
                 per_unit, n_pool, pool_sum)
-    return dollars
+    return out
 
 
 def assign_tiers(df, value_col: str = "value", players_per_tier: int = 6, max_tiers: int = 8):
