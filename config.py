@@ -101,6 +101,12 @@ STREAM_BUFFER = {"QB": 2, "RB": 0, "WR": 0, "TE": 1, "DST": 1, "K": 1}
 #   premium_cap:        hard ceiling on my total premium, as a share of the
 #                       inflated price — never bid what you'd regret winning.
 #   bench_fill_cost:    assumed $ per open bench slot when costing a roster out.
+#   edge_credit:        MY affordability relaxer. The balanced ceiling is the most
+#                       I can pay while still fielding a median-pool starter at
+#                       every other open slot; each $1 a player goes BELOW market
+#                       offsets edge_credit × $1 of that balance damage (captured
+#                       discount is banked team value). 0 = strict balance,
+#                       1 = a discount fully pays for the imbalance it causes.
 # ---------------------------------------------------------------------------
 THREAT = {
     "deploy_fraction": 0.5,
@@ -109,6 +115,7 @@ THREAT = {
     "rivalry_beta": 0.25,
     "premium_cap": 0.15,
     "bench_fill_cost": 1,
+    "edge_credit": 0.5,
 }
 
 # ---------------------------------------------------------------------------

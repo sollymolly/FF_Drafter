@@ -20,6 +20,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+import config
 from ffdrafter.draft import threat
 from ffdrafter.draft.inflation import add_inflated_value, inflation_factor
 from ffdrafter.utils import get_logger, normalize_name
@@ -234,7 +235,15 @@ def nomination_board(state, board, n: int = 15, factor: float | None = None) -> 
     av["rich_demand"] = dem.map(lambda ms: round(sum(1 + tmoney[m] / state.budget for m in ms), 2))
     av["likely_buyer"] = dem.map(lambda ms: max(ms, key=lambda m: (tmoney[m], opp_maxbid[m])) if ms else None)
     my_need = av["position"].map(lambda p: my_needs.get(p, 0) > 0)
-    av["i_target"] = my_need & (av["inflated_value"] >= 3) & (av["inflated_value"] <= my_max)
+    # A target must fit MY roster plan, not just my mechanical max bid: at his
+    # going price I still need to afford a median starter everywhere else.
+    # Players I can no longer realistically buy flip to DRAIN nominations.
+    pool = threat.league_pool_prices(state, board, factor)
+    my_ceiling = {p: threat.my_price_ceiling(state, board, factor, p, pool_prices=pool)
+                  for p in config.SCORABLE_POSITIONS}
+    affordable = av.apply(lambda r: int(r["inflated_value"]) <= my_ceiling.get(r["position"], 0), axis=1)
+    av["i_target"] = (my_need & affordable
+                      & (av["inflated_value"] >= 3) & (av["inflated_value"] <= my_max))
     av["nominate_score"] = ((av["inflated_value"] * av["rich_demand"])
                             .where(~av["i_target"], 0).round().astype(int))
     # The 💰 flag needs a real price: nominating a $2 player drains nobody.

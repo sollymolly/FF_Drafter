@@ -179,7 +179,7 @@ with st.sidebar:
             "needs": st.column_config.TextColumn("Needs"),
         },
     )
-    st.caption("**Star $** = money free after realistically finishing the roster. "
+    st.caption("**Star \\$** = money free after realistically finishing the roster. "
                "**Edge** = value banked under market. Teams high on both are the "
                "danger: they can overpay for a star and still finish ahead.")
 
@@ -247,7 +247,17 @@ with left:
         if rec["already_drafted"]:
             st.info(f"{rec['name']} is already off the board.")
         exp_price = rec.get("expected_price", rec["inflated_value"])
-        r1, r2, r3, r4, r5 = st.columns(5)
+        afford = rec.get("my_afford")
+        roster_capped = afford is not None and rec["suggested_max"] < min(
+            rec["inflated_value"], rec["my_max_bid"])
+        if roster_capped:
+            sm_delta, sm_color = (f"{rec['suggested_max'] - rec['inflated_value']:+d} roster cap",
+                                  "normal")
+        elif rec.get("premium"):
+            sm_delta, sm_color = f"+{rec['premium']} premium", "normal"
+        else:
+            sm_delta, sm_color = None, "normal"
+        r1, r2, r3, r4, r5, r6 = st.columns(6)
         r1.metric("Board value", f"${rec['board_value']}")
         r2.metric("Inflation-adj.", f"${rec['inflated_value']}",
                   delta=f"{rec['inflated_value'] - rec['board_value']:+d}")
@@ -258,21 +268,56 @@ with left:
                        "$1 over the second-highest willingness in the room (you "
                        "included, enforcing board value). Below adj = expect a bargain.")
         r4.metric("Suggested max", f"${rec['suggested_max']}",
-                  delta=(f"+{rec['premium']} premium" if rec.get("premium") else None),
-                  help="Your walk-away price: inflation-adjusted value plus a capped "
-                       "premium for tier scarcity and denying a rich rival — never a "
+                  delta=sm_delta, delta_color=sm_color,
+                  help="Your walk-away price: market value plus a capped scarcity/denial "
+                       "premium, but never more than your roster can absorb — or a "
                        "price you'd regret winning at.")
-        r5.metric("Your max bid", f"${rec['my_max_bid']}")
+        r5.metric("Roster affords", f"${max(afford, 0)}" if afford is not None else "—",
+                  help="The most you can pay and still field a median-pool starter at "
+                       "every other open slot — relaxed toward steals: each $1 below "
+                       "market buys back some balance damage (config edge_credit).")
+        r6.metric("Your max bid", f"${rec['my_max_bid']}")
         notes = [f"{rec['position']} · {rec['team']} · tier {rec['tier']}",
-                 f"{rec['opp_can_afford']} opponents can afford ${rec['inflated_value']}"]
+                 f"{rec['opp_can_afford']} opponents can afford \\${rec['inflated_value']}"]
         if rec.get("is_rookie"):
             notes.append("🎓 rookie — see deep-dive below")
         if rec["last_in_tier"]:
             notes.append("⚠️ **last player in this tier** — value cliff behind him")
         if "edge" in rec:
-            notes.append(f"our board ${rec['board_value']} vs market ${rec['market_value']} "
+            notes.append(f"our board \\${rec['board_value']} vs market \\${rec['market_value']} "
                          f"(edge {rec['edge']:+d}, trust {rec['trust'] * 100:.0f}%)")
         st.caption("  |  ".join(notes))
+        # One verdict-first assessment paragraph. NOTE: captions are markdown, and
+        # a PAIR of bare $ signs flips the text between them into LaTeX math —
+        # every literal dollar must be escaped as \$.
+        if afford is not None and not rec["already_drafted"]:
+            sug, ceil_ = rec["suggested_max"], max(rec["my_ceiling"], 0)
+            left_after = max(0, state.budget_remaining(state.my_team) - sug)
+            slots_after = max(0, state.open_slots(state.my_team) - 1)
+            top = rec.get("top_threat")
+            top_w = rec["threats"][0]["willingness"] if rec.get("threats") else None
+            if sug >= exp_price:      # you can pay what he should close at
+                s = f"**Bid — up to \\${sug}** — the room prices him ~\\${exp_price}"
+                if top and top_w and top_w > exp_price:
+                    s += f", and **{top}** may chase to ~\\${top_w}"
+                s += (f"; your roster covers it. Winning at \\${sug} leaves "
+                      f"\\${left_after} for {slots_after} open slots.")
+                if rec.get("premium") and sug == rec["inflated_value"] + rec["premium"]:
+                    parts = []
+                    if rec.get("scarcity_premium"):
+                        parts.append(f"\\${rec['scarcity_premium']} tier cliff")
+                    if rec.get("rivalry_premium"):
+                        parts.append(f"\\${rec['rivalry_premium']} denial vs **{top}**")
+                    s += f" Includes +\\${rec['premium']} premium ({' + '.join(parts)})."
+            else:                     # the room should outrun your roster
+                s = (f"**Let him go** — the room should take him to ~\\${exp_price}, "
+                     f"past your \\${sug}. Your roster: balanced ceiling \\${ceil_}"
+                     + (f", stretching to \\${afford} if he slides" if afford > ceil_ else "")
+                     + f"; winning at \\${sug} would leave \\${left_after} for "
+                       f"{slots_after} open slots. If bidding stalls cheap, go to "
+                       f"\\${sug} and not a dollar more"
+                     + (f" — otherwise nominate him to drain **{top}**." if top else "."))
+            st.caption(s)
         if rec.get("threats"):
             st.markdown("**⚔️ Threatening teams** — most to least, and what they'd pay:")
             tdf = pd.DataFrame(rec["threats"][:5])
@@ -297,18 +342,6 @@ with left:
                         help="Money beyond realistically finishing their roster."),
                 },
             )
-            adj = (f"your walk-away is lifted to **${rec['suggested_max']}** "
-                   f"(+${rec['premium']} premium)" if rec.get("premium")
-                   else f"your walk-away stays **${rec['suggested_max']}**")
-            st.caption(f"⚔️ Beating the room today ≈ **${rec['cost_to_win']}** — {adj}.")
-        if rec.get("premium"):
-            parts = []
-            if rec.get("scarcity_premium"):
-                parts.append(f"${rec['scarcity_premium']} tier-cliff insurance")
-            if rec.get("rivalry_premium"):
-                parts.append(f"${rec['rivalry_premium']} denial vs **{rec['top_threat']}**")
-            st.caption(f"💰 Premium breakdown: {' + '.join(parts)}; capped at "
-                       f"${rec['premium_cap']} — the priced-in risk of NOT getting him.")
         if rec.get("narrative_reason"):
             st.caption(f"📰 {rec['narrative_reason']}")
 

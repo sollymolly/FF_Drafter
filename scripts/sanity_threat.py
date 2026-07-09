@@ -187,6 +187,27 @@ def run_engine_checks():
     assert prof3.loc["Opp4", "banked_edge"] == 0
     print("undo OK")
 
+    # ---------- my own scope: one big buy must clamp the next suggestion ----------
+    state.record_sale("Bijan Robinson", val("Bijan Robinson") + 2, "Me", position="RB")
+    f3 = inflation_factor(state, board)
+    r3 = engine.recommend_player(state, board, "RB Guy 0", factor=f3)
+    assert r3["my_ceiling"] < r3["inflated_value"], "big buy must shrink the balanced ceiling"
+    assert r3["my_afford"] >= r3["my_ceiling"], "edge credit only relaxes the ceiling"
+    assert r3["suggested_max"] == max(0, min(r3["my_max_bid"],
+                                             r3["inflated_value"] + r3["premium"],
+                                             r3["my_afford"]))
+    assert r3["suggested_max"] < min(r3["inflated_value"], r3["my_max_bid"]), \
+        "roster cap must bind well below market and max bid"
+    nom2 = engine.nomination_board(state, board, n=30, factor=f3)
+    rb0 = nom2[nom2["name"] == "RB Guy 0"]
+    if len(rb0):
+        assert not rb0.iloc[0]["suggestion"].startswith("HOLD"), \
+            "unaffordable player must flip from HOLD to DRAIN"
+    print("my scope OK    ",
+          {k: r3[k] for k in ("inflated_value", "my_ceiling", "my_afford",
+                              "suggested_max", "my_max_bid")})
+    state.undo_last()
+
     print("\nENGINE SANITY CHECKS PASSED")
 
 

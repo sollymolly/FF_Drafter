@@ -52,6 +52,17 @@ PLAYER THREAT (assess_player):
                other team shares the benefit — so we never recommend more than a
                price you'd be content actually winning at.
 
+MY OWN SCOPE (my_price_ceiling): the room isn't the only constraint — max_bid
+only reserves $1 a slot, so after one big buy the tool would happily walk you
+into a second ($186 on two RBs, $1 everywhere else). The balanced ceiling is
+your own fill-cost machinery pointed at yourself: budget minus a median-pool
+starter for every OTHER open slot (bench at $1). It reproduces the market top
+at a fresh draft (~the price curve's #1) and clamps as you spend. A hard cap
+would also block genuine steals, so the operative cap relaxes below market:
+willing to pay p while p <= ceiling + edge_credit x (market - p) — captured
+discount buys back balance damage. suggested_max = min(market + premium,
+that cap, max_bid).
+
 All math runs off the live board's `value` column, so it behaves identically on
 the baseline (ESPN) and model-blend boards, at any league size. Knobs: config.THREAT.
 """
@@ -147,6 +158,37 @@ def manager_profiles(state, board, factor: float | None = None) -> pd.DataFrame:
     return df
 
 
+def my_price_ceiling(state, board, factor: float, position: str,
+                     pool_prices: dict | None = None) -> int:
+    """
+    The most I can pay for a player at `position` while still affording a
+    median-pool starter at every OTHER open slot ($1 per bench spot) — my own
+    fill-cost machinery pointed at myself. The slot he'd fill (starter, flex,
+    or bench) is excluded from the reserve. Can go negative on an over-committed
+    roster; callers decide how to floor it.
+    """
+    me = state.my_team
+    pool = pool_prices if pool_prices is not None else league_pool_prices(state, board, factor)
+    flex_pos = config.LEAGUE.get("flex_positions", ["RB", "WR", "TE"])
+    flex_price = min([pool.get(p, 1.0) for p in flex_pos] or [1.0])
+    bench_cost = float(config.THREAT["bench_fill_cost"])
+
+    needs, flex_open = state.strict_position_needs(me)
+    starters_open = sum(needs.values()) + flex_open
+    bench_open = max(0, state.open_slots(me) - starters_open)
+    fill = (sum(n * pool.get(p, 1.0) for p, n in needs.items())
+            + flex_open * flex_price + bench_open * bench_cost)
+    if needs.get(position, 0) > 0:
+        slot = pool.get(position, 1.0)
+    elif position in flex_pos and flex_open > 0:
+        slot = flex_price
+    elif bench_open > 0:
+        slot = bench_cost
+    else:
+        slot = 0.0   # no room for him at all — ceiling is just leftover cash
+    return int(round(state.budget_remaining(me) - (fill - slot)))
+
+
 def assess_player(state, board, name: str, factor: float | None = None,
                   profiles: pd.DataFrame | None = None) -> dict | None:
     """
@@ -217,6 +259,11 @@ def assess_player(state, board, name: str, factor: float | None = None,
     cap = int(round(cfg["premium_cap"] * v_infl))
     premium = int(min(scarcity + rivalry, cap))
 
+    # --- what MY roster can afford (see module docstring: MY OWN SCOPE) ---
+    lam = float(cfg.get("edge_credit", 0.5))
+    ceiling = my_price_ceiling(state, board, factor, pos)
+    afford = max(0, int(round((ceiling + lam * v_infl) / (1 + lam))))
+
     return {
         "expected_price": exp_price,
         "cost_to_win": int(cost_to_win),
@@ -226,6 +273,8 @@ def assess_player(state, board, name: str, factor: float | None = None,
         "rivalry_premium": rivalry,
         "premium": premium,
         "premium_cap": cap,
-        "suggested_max": int(min(my_max, v_infl + premium)),
+        "my_ceiling": ceiling,
+        "my_afford": afford,
+        "suggested_max": max(0, min(my_max, v_infl + premium, afford)),
         "last_in_tier": is_last,
     }

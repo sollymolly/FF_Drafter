@@ -73,6 +73,13 @@ chasing — never past a price you'd regret winning at. Nominations are weighted
 teams shopping with house money first. Knobs live in `config.THREAT`; sanity-check offline
 with `python scripts/sanity_threat.py [--app]`.
 
+Your own roster constrains the number too: **Roster affords** is the most you can pay while
+still fielding a median-pool starter at every other open slot (the same standard the threat
+model holds opponents to), relaxed toward steals — each $1 below market buys back some
+balance damage (`edge_credit`). After one big buy, the suggested max for the next star
+clamps to steal-only prices instead of walking you to your max bid, and players you can no
+longer realistically buy flip from HOLD to DRAIN on the nomination board.
+
 Board dollars are also calibrated to **your room's price curve** (`config.PRICE_CURVE`):
 competitive rooms pay a stars premium ESPN's averaged AAV shape misses, so the top-10 pin to
 the observed $80-90 plateau, the ranks just below taper smoothly (no cliff), and the mid tier
