@@ -63,6 +63,16 @@ opponents, then log each sale (player + price + winning manager). The dashboard 
 max bid, every manager's budget, live inflation, the best values left, and a "what should I
 pay for X?" card. State auto-saves after each sale, so a refresh/restart resumes the draft.
 
+The pay card also prices **the risk of NOT getting a player** (`ffdrafter/draft/threat.py`):
+it tracks each opponent's *banked edge* (board value bought under market — their license to
+overpay and still finish ahead) and *spare star money* (budget beyond realistically finishing
+their roster), forecasts the **expected closing price** from the likely bidders
+(second-price auction logic — a lone rich bidder raises nothing until someone pushes them),
+and lifts your suggested max by a **capped** scarcity + denial premium when a strong team is
+chasing — never past a price you'd regret winning at. Nominations are weighted to drain the
+teams shopping with house money first. Knobs live in `config.THREAT`; sanity-check offline
+with `python scripts/sanity_threat.py [--app]`.
+
 ## How much to trust the model
 
 We backtest three forecasters on **the market's preseason top-200 skill players** (2021–2025)
@@ -98,11 +108,13 @@ rewrites `data/processed/blend_weights.json`).
 
 **v1 complete.** Scaffold, baseline board, live Streamlit assistant, projection engine
 (nflverse data, veteran + rookie tracks, VOR→dollars, market-blended board, backtest), a
-bounded news-sentiment nudge (±10% cap, reason shown), and rookie deep-dive cards (draft
-capital + landing spot + historical comps). The model board now uses **learned per-position
+bounded news-sentiment nudge (±10% cap, reason shown), rookie deep-dive cards (draft
+capital + landing spot + historical comps), and the per-opponent **threat model** (banked
+edge + spare star money → expected closing price, capped scarcity/denial premium,
+drain-the-rich nominations). The model board now uses **learned per-position
 blend weights** (`model/blend.py`; currently 0 — see "How much to trust the model"), with
 `--model-weight` as a manual override; the nudge can be skipped with `--no-narrative`.
 
 Planned refinements: College stats (CollegeFootballData) to sharpen rookies once a key is
-set; per-opponent nomination strategy; optional ESPN live-draft sync. v1 strategy scope is
-intentionally lean — see the build plan.
+set; optional ESPN live-draft sync. v1 strategy scope is intentionally lean — see the
+build plan.

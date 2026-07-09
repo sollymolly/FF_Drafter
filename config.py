@@ -57,6 +57,32 @@ FLEX_SPLIT = {"RB": 0.45, "WR": 0.45, "TE": 0.10}
 STREAM_BUFFER = {"QB": 2, "RB": 0, "WR": 0, "TE": 1, "DST": 1, "K": 1}
 
 # ---------------------------------------------------------------------------
+# THREAT-MODEL KNOBS (draft/threat.py) — opponent purchasing power & my premium.
+#   deploy_fraction:    share of a team's THREAT MONEY they'll throw at one star.
+#                       Threat money = spare-cash surplus above the room median
+#                       + banked edge above the room average (each floored at 0).
+#                       Raw surplus is huge for everyone early — that room-wide
+#                       effect is inflation's job; only the advantage is a threat.
+#   bench_bid_fraction: what managers with no open starter slot still bid on a
+#                       star (bench/flex hoarding money), pre-max-bid cap.
+#   scarcity_alpha:     fraction of the tier-cliff drop I'll pay to insure when a
+#                       player is the last of his tier at a position I need.
+#   rivalry_beta:       $ of denial premium per $ a credible bidder's banked edge
+#                       sits above the room average (scaled by star size).
+#   premium_cap:        hard ceiling on my total premium, as a share of the
+#                       inflated price — never bid what you'd regret winning.
+#   bench_fill_cost:    assumed $ per open bench slot when costing a roster out.
+# ---------------------------------------------------------------------------
+THREAT = {
+    "deploy_fraction": 0.5,
+    "bench_bid_fraction": 0.5,
+    "scarcity_alpha": 0.30,
+    "rivalry_beta": 0.25,
+    "premium_cap": 0.15,
+    "bench_fill_cost": 1,
+}
+
+# ---------------------------------------------------------------------------
 # SCORING WEIGHTS — reception value follows the scoring mode automatically.
 # ---------------------------------------------------------------------------
 _RECEPTION_PTS = {"PPR": 1.0, "HALF_PPR": 0.5, "STANDARD": 0.0}

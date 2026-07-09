@@ -104,6 +104,22 @@ class DraftState:
         from collections import Counter
         return dict(Counter(s.position for s in self.sales_for(manager) if s.position))
 
+    def strict_position_needs(self, manager: str) -> tuple:
+        """
+        Slot-accurate open starters: (per-position needs EXCLUDING flex, open flex
+        count). Flex-eligible players beyond a position's base slots count toward
+        filling FLEX. The flex-inclusive view (position_needs) over-counts on purpose
+        for bid gating; money math (threat.fill_cost) needs real slot counts, so both
+        derive from this one computation.
+        """
+        filled = self.filled_by_position(manager)
+        slots = self.roster_slots
+        flex_positions = config.LEAGUE.get("flex_positions", ["RB", "WR", "TE"])
+        needs = {p: max(0, slots.get(p, 0) - filled.get(p, 0)) for p in config.SCORABLE_POSITIONS}
+        surplus = sum(max(0, filled.get(p, 0) - slots.get(p, 0)) for p in flex_positions)
+        flex_open = max(0, slots.get("FLEX", 0) - surplus)
+        return needs, flex_open
+
     def position_needs(self, manager: str) -> dict:
         """
         Open STARTER slots per position, flex-aware. A shared FLEX slot still open adds
@@ -112,14 +128,9 @@ class DraftState:
         manager might still bid on a position, not the exact slot they'd use.
         Bench depth is intentionally ignored (weak demand).
         """
-        filled = self.filled_by_position(manager)
-        slots = self.roster_slots
-        flex_positions = config.LEAGUE.get("flex_positions", ["RB", "WR", "TE"])
-        needs = {p: max(0, slots.get(p, 0) - filled.get(p, 0)) for p in config.SCORABLE_POSITIONS}
-        surplus = sum(max(0, filled.get(p, 0) - slots.get(p, 0)) for p in flex_positions)
-        flex_open = max(0, slots.get("FLEX", 0) - surplus)
+        needs, flex_open = self.strict_position_needs(manager)
         if flex_open:
-            for p in flex_positions:
+            for p in config.LEAGUE.get("flex_positions", ["RB", "WR", "TE"]):
                 needs[p] += flex_open
         return needs
 

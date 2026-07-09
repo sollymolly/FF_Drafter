@@ -141,7 +141,7 @@ except Exception as e:
     st.stop()
 
 factor = inflation_factor(state, board)
-panel = engine.manager_panel(state)
+panel = engine.manager_panel(state, board, factor=factor)
 
 # ---- Sidebar: your team, inflation, all managers, danger zone ----
 with st.sidebar:
@@ -161,16 +161,27 @@ with st.sidebar:
     st.divider()
     st.subheader("Managers")
     st.dataframe(
-        panel[["manager", "budget_left", "open_slots", "max_bid", "needs"]]
-        .sort_values("budget_left", ascending=False),
+        panel[["manager", "budget_left", "max_bid", "surplus", "banked_edge", "needs"]]
+        .sort_values(["surplus", "budget_left"], ascending=False),
         hide_index=True, width="stretch",
         column_config={
             "budget_left": st.column_config.NumberColumn("Budget", format="$%d"),
             "max_bid": st.column_config.NumberColumn("Max bid", format="$%d"),
-            "open_slots": st.column_config.NumberColumn("Open"),
+            "surplus": st.column_config.NumberColumn(
+                "Star $", format="$%d",
+                help="Budget minus the realistic cost to finish their roster — "
+                     "discretionary money they can throw at stars."),
+            "banked_edge": st.column_config.NumberColumn(
+                "Edge", format="$%d",
+                help="Board value banked under market so far. Their projected final "
+                     "team value is starting budget + edge, so this IS how far above "
+                     "par (or below, if negative) their team sits."),
             "needs": st.column_config.TextColumn("Needs"),
         },
     )
+    st.caption("**Star $** = money free after realistically finishing the roster. "
+               "**Edge** = value banked under market. Teams high on both are the "
+               "danger: they can overpay for a star and still finish ahead.")
 
     st.divider()
     if st.button("↻ Reload board", width="stretch"):
@@ -235,22 +246,47 @@ with left:
     if rec:
         if rec["already_drafted"]:
             st.info(f"{rec['name']} is already off the board.")
-        r1, r2, r3, r4 = st.columns(4)
+        exp_price = rec.get("expected_price", rec["inflated_value"])
+        r1, r2, r3, r4, r5 = st.columns(5)
         r1.metric("Board value", f"${rec['board_value']}")
         r2.metric("Inflation-adj.", f"${rec['inflated_value']}",
                   delta=f"{rec['inflated_value'] - rec['board_value']:+d}")
-        r3.metric("Your max bid", f"${rec['my_max_bid']}")
-        r4.metric("Suggested max", f"${rec['suggested_max']}")
+        r3.metric("Expected price", f"${exp_price}",
+                  delta=f"{exp_price - rec['inflated_value']:+d} vs adj",
+                  delta_color="inverse",
+                  help="Likely closing price given who actually bids: the winner pays "
+                       "$1 over the second-highest willingness in the room (you "
+                       "included, enforcing board value). Below adj = expect a bargain.")
+        r4.metric("Suggested max", f"${rec['suggested_max']}",
+                  delta=(f"+{rec['premium']} premium" if rec.get("premium") else None),
+                  help="Your walk-away price: inflation-adjusted value plus a capped "
+                       "premium for tier scarcity and denying a rich rival — never a "
+                       "price you'd regret winning at.")
+        r5.metric("Your max bid", f"${rec['my_max_bid']}")
         notes = [f"{rec['position']} · {rec['team']} · tier {rec['tier']}",
                  f"{rec['opp_can_afford']} opponents can afford ${rec['inflated_value']}"]
         if rec.get("is_rookie"):
             notes.append("🎓 rookie — see deep-dive below")
         if rec["last_in_tier"]:
-            notes.append("⚠️ **last player in this tier** — a small premium is justified")
+            notes.append("⚠️ **last player in this tier** — value cliff behind him")
         if "edge" in rec:
             notes.append(f"our board ${rec['board_value']} vs market ${rec['market_value']} "
                          f"(edge {rec['edge']:+d}, trust {rec['trust'] * 100:.0f}%)")
         st.caption("  |  ".join(notes))
+        if rec.get("threats"):
+            tt = " · ".join(f"**{t['manager']}** → ~${t['willingness']} "
+                            f"(edge {t['edge_vs_room']:+d} vs room, ${max(t['surplus'], 0)} to burn)"
+                            for t in rec["threats"])
+            st.caption(f"⚔️ Likely bidders: {tt}  —  beating them today ≈ **${rec['cost_to_win']}**")
+        if rec.get("premium"):
+            parts = []
+            if rec.get("scarcity_premium"):
+                parts.append(f"${rec['scarcity_premium']} tier-cliff insurance")
+            if rec.get("rivalry_premium"):
+                parts.append(f"${rec['rivalry_premium']} denial vs **{rec['top_threat']}**")
+            st.caption(f"💰 Premium +${rec['premium']} over the adjusted price "
+                       f"({' + '.join(parts)}; capped at ${rec['premium_cap']}) — "
+                       f"the priced-in risk of NOT getting him.")
         if rec.get("narrative_reason"):
             st.caption(f"📰 {rec['narrative_reason']}")
 
@@ -290,19 +326,24 @@ with right:
 # ---- Nomination strategy (full width) ----
 st.divider()
 st.subheader("🎯 Who to nominate")
-st.caption("Auction leverage: **nominate players your opponents still need and can pay for** "
-           "to drain their budgets, and **hold the players you want** until the room's money "
-           "thins. `Demand` = opponents who still need that position *and* can afford the price; "
-           "your own targets are pushed down the list.")
+st.caption("Auction leverage: **nominate players your opponents still need and can pay for** — "
+           "especially teams shopping with house money — to drain budgets before your targets "
+           "come up. `Rich demand` weights each real bidder by their spare star money, so two "
+           "rich bidders beat three broke ones; `Likely buyer` is the richest of them. Your own "
+           "targets are pushed down the list (**HOLD**).")
 nom = engine.nomination_board(state, board, n=15, factor=factor)
 if nom is not None and len(nom):
     st.dataframe(
         nom, hide_index=True, width="stretch",
         column_config={
             "inflated_value": st.column_config.NumberColumn("Price~", format="$%d"),
+            "likely_buyer": st.column_config.TextColumn("Likely buyer"),
+            "rich_demand": st.column_config.NumberColumn(
+                "Rich demand", format="%.1f",
+                help="Real bidders (need + can pay) weighted by threat money — spare "
+                     "cash plus banked edge over the room: each counts 1 + that/budget."),
             "opp_demand": st.column_config.NumberColumn("Demand"),
             "opp_need": st.column_config.NumberColumn("Need"),
-            "opp_can_afford": st.column_config.NumberColumn("CanPay"),
             "nominate_score": st.column_config.NumberColumn("Score", format="%d"),
         },
     )
