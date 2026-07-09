@@ -5,11 +5,16 @@ Run from the project root:
     python -m streamlit run app/streamlit_app.py
 
 Flow:
-  1. First load with no saved draft -> Setup screen (name your team + opponents).
+  1. First load with no saved draft -> setup wizard: league size, then team names.
   2. Draft screen -> log each sale (player + price + winning manager); the panels
      (your budget/max-bid, every manager's budget, inflation, best values, and a
      per-player "what should I pay?" card) update live. State is saved to disk after
      every change, so a browser refresh or restart resumes the draft.
+
+The valuation board is built IN-PROCESS for the chosen league size from cached
+inputs (ESPN market pull, projections, blend weights) via ffdrafter/board.py.
+Changing team count never requires re-running scripts/build_board.py — that
+script only refreshes the underlying data.
 """
 
 import sys
@@ -26,6 +31,7 @@ import streamlit as st
 
 import config
 from ffdrafter import store
+from ffdrafter.board import build_board
 from ffdrafter.draft import engine
 from ffdrafter.draft.inflation import inflation_factor
 from ffdrafter.draft.state import DraftState
@@ -36,12 +42,15 @@ st.set_page_config(page_title="FF Drafter — Auction", layout="wide")
 # ---------------------------------------------------------------------------
 # Data loading / state plumbing
 # ---------------------------------------------------------------------------
-@st.cache_data(show_spinner=False)
-def load_board():
-    # Prefer the model board if it's been built; fall back to the baseline.
-    b = store.load_board("model")
-    if b is None:
-        b = store.load_board("baseline")
+@st.cache_data(show_spinner="Calibrating the board for your league…")
+def league_board(teams: int, budget: int):
+    """
+    Board priced for THIS league's economics, rebuilt in-process from cached
+    inputs (sub-second) and memoized on (teams, budget). Uses model values when
+    projections are cached, else falls back to the ESPN baseline.
+    """
+    league = {**config.LEAGUE, "teams": int(teams), "budget": int(budget)}
+    b, _ = build_board(league, source="auto")
     return b
 
 
@@ -56,11 +65,6 @@ def persist(state: DraftState) -> None:
     state.save()
 
 
-board = load_board()
-if board is None:
-    st.error("No valuation board found. Build it first:  `python scripts/build_board.py`")
-    st.stop()
-
 # Restore an in-progress draft from disk on first page load.
 if "draft" not in st.session_state:
     st.session_state["draft"] = DraftState.load()
@@ -69,41 +73,73 @@ state: DraftState | None = st.session_state.get("draft")
 
 
 # ---------------------------------------------------------------------------
-# SETUP SCREEN
+# SETUP WIZARD — step 1: league size, step 2: team names, then the draft screen.
+# The board is recalibrated in-process for whatever size is chosen; no CLI step.
 # ---------------------------------------------------------------------------
 if state is None:
     st.title("🏈 FF Drafter — New Auction Draft")
     lg = config.LEAGUE
-    st.caption(f"{lg['teams']}-team · ${lg['budget']}/manager · {lg['scoring']} · "
-               f"{config.roster_size()}-man rosters · season {lg['season']}  "
-               f"(edit config.py to change)")
 
-    with st.form("setup"):
-        my_team = st.text_input("Your team name", value="My Team")
-        st.write("Opponent names:")
-        opp_cols = st.columns(3)
-        opponents = []
-        for i in range(config.num_opponents()):
-            with opp_cols[i % 3]:
-                opponents.append(st.text_input(f"Opponent {i + 1}", value=f"Opponent {i + 1}",
-                                                key=f"opp_{i}"))
-        start = st.form_submit_button("Start draft", type="primary")
-
-    if start:
-        names = [my_team] + opponents
-        if any(not n.strip() for n in names):
-            st.error("Every team needs a name.")
-        elif len(set(names)) != len(names):
-            st.error("Team names must be unique.")
-        else:
-            persist(DraftState.new(my_team.strip(), [o.strip() for o in opponents]))
+    if st.session_state.get("setup_step", "teams") == "teams":
+        st.subheader("Step 1 of 2 — League size")
+        st.caption(f"${lg['budget']}/manager · {lg['scoring']} · "
+                   f"{config.roster_size()}-man rosters · season {lg['season']}")
+        n_teams = st.number_input(
+            "Number of teams", min_value=2, max_value=32, step=1,
+            value=st.session_state.get("setup_teams", lg["teams"]),
+            help="Board $ values recalibrate automatically to this league size.",
+        )
+        if st.button("Continue →", type="primary"):
+            st.session_state["setup_teams"] = int(n_teams)
+            st.session_state["setup_step"] = "names"
             st.rerun()
+    else:
+        teams = st.session_state.get("setup_teams", lg["teams"])
+        league = {**lg, "teams": teams}
+        st.subheader("Step 2 of 2 — Team names")
+        st.caption(f"{teams}-team · ${lg['budget']}/manager · {lg['scoring']} · "
+                   f"season {lg['season']}")
+        if st.button("← Back to league size"):
+            st.session_state["setup_step"] = "teams"
+            st.rerun()
+
+        with st.form("setup"):
+            my_team = st.text_input("Your team name", value="My Team")
+            st.write("Opponent names:")
+            opp_cols = st.columns(3)
+            opponents = []
+            for i in range(config.num_opponents(league)):
+                with opp_cols[i % 3]:
+                    opponents.append(st.text_input(f"Opponent {i + 1}", value=f"Opponent {i + 1}",
+                                                    key=f"opp_{i}"))
+            start = st.form_submit_button("Start draft", type="primary")
+
+        if start:
+            names = [my_team] + opponents
+            if any(not n.strip() for n in names):
+                st.error("Every team needs a name.")
+            elif len(set(names)) != len(names):
+                st.error("Team names must be unique.")
+            else:
+                persist(DraftState.new(my_team.strip(), [o.strip() for o in opponents],
+                                       league=league))
+                for k in ("setup_step", "setup_teams"):
+                    st.session_state.pop(k, None)
+                st.rerun()
     st.stop()
 
 
 # ---------------------------------------------------------------------------
 # DRAFT SCREEN
 # ---------------------------------------------------------------------------
+# Board priced for the league this draft was created with (memoized per size).
+try:
+    board = league_board(state.teams, state.budget)
+except Exception as e:
+    st.error(f"Couldn't build the board ({e}). On a fresh machine, run "
+             "`python scripts/build_board.py --refresh` once with internet access.")
+    st.stop()
+
 factor = inflation_factor(state, board)
 panel = engine.manager_panel(state)
 
@@ -138,7 +174,7 @@ with st.sidebar:
 
     st.divider()
     if st.button("↻ Reload board", width="stretch"):
-        load_board.clear()
+        league_board.clear()
         st.rerun()
     if st.button("Undo last sale", width="stretch",
                  disabled=not state.sales):
@@ -155,7 +191,8 @@ with st.sidebar:
 # ---- Main: header metrics ----
 st.title("FF Drafter — Live Auction")
 _src = board["source"].iloc[0] if "source" in board.columns and len(board) else "?"
-st.caption(f"Values: {'model blend (projections + market)' if _src == 'model_blend' else 'ESPN consensus (baseline)'}")
+st.caption(f"{state.teams}-team · ${state.budget}/manager · "
+           f"Values: {'model blend (projections + market)' if _src == 'model_blend' else 'ESPN consensus (baseline)'}")
 m1, m2, m3, m4 = st.columns(4)
 m1.metric("Players sold", len(state.sales))
 m2.metric("$ in the room", f"${state.total_remaining_money()}")

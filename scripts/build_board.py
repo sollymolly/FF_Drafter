@@ -1,18 +1,19 @@
 """
-scripts/build_board.py — build a valuation board and save it.
+scripts/build_board.py — CLI wrapper: refresh data, build a board, save + print it.
 
     python scripts/build_board.py                       # baseline (ESPN consensus AAV)
     python scripts/build_board.py --source model        # our projections blended w/ market
     python scripts/build_board.py --source model --model-weight 0.7
-    python scripts/build_board.py --refresh              # re-pull ESPN + retrain
+    python scripts/build_board.py --refresh             # re-pull ESPN + retrain
+    python scripts/build_board.py --teams 10            # inspect a 10-team board
 
-The baseline board re-scales ESPN AAV onto your league economics. The model board
-runs our projection engine (veteran + rookie), converts to VOR dollars, and blends
-toward the market for safety. Both share one schema, so the live app consumes either.
+All construction logic lives in ffdrafter/board.py, shared with the live app. The
+app rebuilds the board in-process for whatever league size you pick at setup, so
+this script exists to REFRESH DATA (network pull, model training) — never to
+change league size.
 """
 
 import argparse
-import json
 import sys
 from pathlib import Path
 
@@ -30,37 +31,7 @@ import pandas as pd
 
 import config
 from ffdrafter import store
-from ffdrafter.data import market
-from ffdrafter.valuation import auction
-from ffdrafter.utils import get_logger
-
-logger = get_logger("build_board")
-
-
-def _load_or_build_projections(refresh: bool):
-    from ffdrafter.model import project
-    cache = config.PATHS["processed"] / f"projections_{config.LEAGUE['season']}.parquet"
-    proj = None if refresh else store.load_df(cache)
-    if proj is None:
-        proj = project.build_projections(force_refresh=refresh)
-        project.save_projections(proj)
-    return proj
-
-
-def _resolve_model_weight(override: float | None):
-    """CLI override wins; else learned per-position weights; else flat 0.5."""
-    if override is not None:
-        return override, f"model_weight={override:g}"
-    wpath = config.PATHS["processed"] / "blend_weights.json"
-    if wpath.exists():
-        payload = json.loads(wpath.read_text())
-        weights = payload["weights"]
-        logger.info("Learned blend weights from %s (backtest seasons %s)",
-                    wpath.name, payload.get("seasons"))
-        return weights, "learned " + " ".join(f"{p}:{w:g}" for p, w in weights.items())
-    logger.info("No blend_weights.json - flat 0.5 blend. "
-                "Run `python -m ffdrafter.model.blend` to learn weights.")
-    return 0.5, "model_weight=0.5 (default)"
+from ffdrafter.board import build_board
 
 
 def main() -> None:
@@ -73,33 +44,30 @@ def main() -> None:
                          "default: learned per-position weights from blend_weights.json, else 0.5")
     ap.add_argument("--no-narrative", action="store_true",
                     help="skip the bounded news-sentiment nudge")
+    ap.add_argument("--teams", type=int, default=None,
+                    help="override number of teams (default: config.LEAGUE['teams'])")
+    ap.add_argument("--budget", type=int, default=None,
+                    help="override per-team auction budget (default: config.LEAGUE['budget'])")
     args = ap.parse_args()
 
-    mkt = market.pull_espn(force_refresh=args.refresh)
-    baseline = auction.build_baseline_board(mkt)
+    lg = dict(config.LEAGUE)
+    if args.teams is not None:
+        lg["teams"] = args.teams
+    if args.budget is not None:
+        lg["budget"] = args.budget
 
-    if args.source == "model":
-        proj = _load_or_build_projections(args.refresh)
-        nudges = None
-        if not args.no_narrative:
-            from ffdrafter.model import narrative
-            nudges = narrative.fetch_nudges(force_refresh=args.refresh)
-        weight, weight_label = _resolve_model_weight(args.model_weight)
-        board = auction.build_model_board(proj, baseline, model_weight=weight,
-                                          narrative_df=nudges)
-        from ffdrafter.model import rookie_card
-        rookie_card.build_rookie_cards(proj)
-        name = "model"
-    else:
-        board = baseline
-        name = "baseline"
+    board, info = build_board(
+        lg, source=args.source, refresh=args.refresh, train_if_missing=True,
+        narrative=not args.no_narrative, model_weight=args.model_weight,
+        rookie_cards=(args.source == "model"),
+    )
+    name = info["name"]
     store.save_board(board, name)
 
-    lg = config.LEAGUE
-    label = f"{name} board" + (f" ({weight_label})" if name == "model" else "")
+    label = f"{name} board" + (f" ({info['weight_label']})" if info["weight_label"] else "")
     print(f"\n{label} - {lg['season']} | {lg['teams']}-team {lg['scoring']} | ${lg['budget']}/team")
     print(f"Players: {len(board)} | total ${int(board['value'].sum())} ~= league money "
-          f"${config.total_money()}")
+          f"${config.total_money(lg)}")
 
     priced = board[board["value"] >= 2]
     counts = priced["position"].value_counts().to_dict()
