@@ -20,6 +20,14 @@ data/session.json
 data/session.json.tmp
 !**/.gitkeep
 
+# ... except the small cached inputs the live app needs at runtime
+# (lets Streamlit Community Cloud serve the app without running any scripts)
+!data/raw/espn_market_*.parquet
+!data/raw/news_nudges.parquet
+!data/processed/projections_*.parquet
+!data/processed/blend_weights.json
+!data/processed/rookie_cards_*.parquet
+
 # OS / editor
 .DS_Store
 .idea/
