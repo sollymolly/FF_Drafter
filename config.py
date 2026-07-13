@@ -63,11 +63,28 @@ LEAGUE = {
 #   within ~$2, so it stays shape-based. ONE YEAR of data — refit when another
 #   season exists. Set `targets` to None to fall back to the two-point band
 #   (top1/topn), or all to None for the flat market shape.
+#
+# LEAGUE-SIZE SCALING: the pins are literal dollars only in the room they were
+# fitted in (`fitted_teams` × `fitted_budget` of money). Any other room first
+# rescales them by (league money / fitted money) ** `elasticity`, BEFORE the
+# zero-sum reshape. elasticity 0 = absolute pins: a 12-team room's extra $400
+# would land entirely on ranks 31+, inflating every mid-tier median — which
+# feeds fill_cost/surplus/threat_money and sinks the fresh-draft roster ceiling
+# below the #1 price (the $91-for-Gibbs bug). 1 = fully proportional: the fit
+# itself says willingness saturates (nobody pays $118 for the #1). 0.5 splits
+# the extra money between stars and mids: a 12-team $200 room pins the #1 at
+# ~$104 and leaves ~$640 above the floor for ranks 31+ (vs ~$775 with absolute
+# pins; $408 in the fitted 10-team room). A judgment call, not a fit — validate
+# against real 12-team prices when any exist. Omitting fitted_teams/fitted_budget
+# disables scaling (old absolute-pin behavior).
 # ---------------------------------------------------------------------------
 PRICE_CURVE = {
     "targets": [95, 86, 79, 74, 71, 70, 68, 64, 58, 53,    # ranks 1-10
                 51, 51, 50, 49, 48, 46, 44, 40, 37, 34,    # ranks 11-20
                 34, 33, 32, 31, 29, 29, 28, 27, 26, 25],   # ranks 21-30
+    "fitted_teams": 10,   # league size the targets (and fallback band) were fitted in
+    "fitted_budget": 200, # $/manager in that fitted room
+    "elasticity": 0.5,    # pin response to room money: 0 = absolute, 1 = proportional
     "top_n": 10,          # band width for the top1/topn fallback below
     "top1_target": None,  # two-point fallback when no fitted targets exist
     "topn_target": None,

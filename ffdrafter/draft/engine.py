@@ -239,7 +239,9 @@ def nomination_board(state, board, n: int = 15, factor: float | None = None) -> 
     # going price I still need to afford a median starter everywhere else.
     # Players I can no longer realistically buy flip to DRAIN nominations.
     pool = threat.league_pool_prices(state, board, factor)
-    my_ceiling = {p: threat.my_price_ceiling(state, board, factor, p, pool_prices=pool)
+    anchor = threat.fresh_draft_anchor(state, board)
+    my_ceiling = {p: threat.my_price_ceiling(state, board, factor, p,
+                                             pool_prices=pool, anchor=anchor)
                   for p in config.SCORABLE_POSITIONS}
     affordable = av.apply(lambda r: int(r["inflated_value"]) <= my_ceiling.get(r["position"], 0), axis=1)
     av["i_target"] = (my_need & affordable

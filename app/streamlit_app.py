@@ -250,11 +250,12 @@ with left:
         afford = rec.get("my_afford")
         roster_capped = afford is not None and rec["suggested_max"] < min(
             rec["inflated_value"], rec["my_max_bid"])
+        uplift = rec["suggested_max"] - rec["inflated_value"]
         if roster_capped:
-            sm_delta, sm_color = (f"{rec['suggested_max'] - rec['inflated_value']:+d} roster cap",
-                                  "normal")
-        elif rec.get("premium"):
-            sm_delta, sm_color = f"+{rec['premium']} premium", "normal"
+            sm_delta, sm_color = f"{uplift:+d} roster cap", "normal"
+        elif rec.get("premium") and uplift > 0:
+            # the uplift you actually get (the premium net of the afford cap)
+            sm_delta, sm_color = f"+{uplift} premium", "normal"
         else:
             sm_delta, sm_color = None, "normal"
         r1, r2, r3, r4, r5, r6 = st.columns(6)

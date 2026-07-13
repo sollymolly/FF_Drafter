@@ -12,6 +12,11 @@ so prices, inflation, and medians behave like a live board. Scenarios covered:
   - mid-tier player       -> star scaling keeps premiums negligible
   - broke manager         -> max_bid removes him from the threat list
   - undo                  -> everything derives back cleanly
+  - league-size sweep     -> price-curve pins rise SUB-proportionally with room
+                             money, and the fresh-draft roster cap never clips
+                             the #1 player at 10/12/14 teams (the fresh-draft
+                             anchor κ makes this hold at any size; the cap exists
+                             to clamp over-commitment, never the first nomination)
 
 --app seeds a synthetic market cache + session, runs the app via streamlit's
 AppTest, and ALWAYS deletes what it seeded. It refuses to run if a real session
@@ -211,6 +216,67 @@ def run_engine_checks():
     print("\nENGINE SANITY CHECKS PASSED")
 
 
+def run_curve_scaling_checks():
+    """
+    The fitted pins are 10-team dollars. A bigger room must lift them
+    sub-proportionally (config.PRICE_CURVE elasticity) instead of dumping all
+    its extra money on ranks 31+ — absolute pins inflate every mid-pool median,
+    which skews fill_cost/surplus/threat_money and made the fresh-draft roster
+    cap clip the #1 player ($91 for a $95 Gibbs at 12 teams).
+
+    Scaling STRUCTURE is asserted on the synthetic board; the fresh-draft
+    "roster cap must not clip the #1" invariant is asserted at EVERY swept size
+    on both boards. A fixed budget cannot buy the #1 pin AND median-pool
+    starters everywhere in a room richer than the fitted one (at any
+    elasticity), so the invariant is delivered by the fresh-draft anchor κ
+    (threat.fresh_draft_anchor), which scales my reserve to what a fresh budget
+    can actually hold next to the #1 price.
+    """
+    pc = getattr(config, "PRICE_CURVE", {}) or {}
+    if not (pc.get("targets") and pc.get("fitted_teams") and pc.get("fitted_budget")):
+        print("curve scaling SKIPPED (no fitted targets or fitted size recorded)")
+        return
+    fitted_money = pc["fitted_teams"] * pc["fitted_budget"]
+
+    def fresh_top_rec(board, teams, budget):
+        state = DraftState.new("Me", [f"Opp{i}" for i in range(1, teams)],
+                               league={**config.LEAGUE, "teams": teams, "budget": budget})
+        f = inflation_factor(state, board)
+        top_name = board.nlargest(1, "value").iloc[0]["name"]
+        return engine.recommend_player(state, board, top_name, factor=f)
+
+    def check_fresh_invariant(rec, teams, label):
+        headroom = rec["my_afford"] - rec["inflated_value"]
+        print(f"curve scaling {teams}T [{label}]: #1 ${rec['board_value']}, "
+              f"afford ${rec['my_afford']}, suggested ${rec['suggested_max']} "
+              f"(headroom {headroom:+d})")
+        assert headroom >= 0 and rec["suggested_max"] >= rec["inflated_value"], (
+            f"{teams}T fresh draft [{label}]: roster cap ${rec['my_afford']} clips "
+            f"the #1 at ${rec['inflated_value']} — must only bind after over-commitment")
+
+    tops = {}
+    for teams in (10, 12, 14):
+        league = {**config.LEAGUE, "teams": teams, "budget": pc["fitted_budget"]}
+        rec = fresh_top_rec(mk_board(league), teams, pc["fitted_budget"])
+        tops[teams] = rec["board_value"]
+        check_fresh_invariant(rec, teams, "synthetic")
+    assert tops[10] == pc["targets"][0], "the fitted room must reproduce the fitted pin exactly"
+    assert tops[10] < tops[12] < tops[14], "pins must rise with room money"
+    assert tops[14] / tops[10] < (14 * pc["fitted_budget"]) / fitted_money, \
+        "pins must rise SUB-proportionally with money (willingness saturates)"
+
+    cache = config.PATHS["raw"] / f"espn_market_{config.LEAGUE['season']}.parquet"
+    if cache.exists():
+        from ffdrafter.board import build_board
+        for teams in (pc["fitted_teams"], 12, 14):
+            league = {**config.LEAGUE, "teams": teams, "budget": pc["fitted_budget"]}
+            rec = fresh_top_rec(build_board(league, source="auto")[0], teams, pc["fitted_budget"])
+            check_fresh_invariant(rec, teams, "real board")
+    else:
+        print("curve scaling: no market cache — real-board invariant not checked")
+    print("curve scaling OK")
+
+
 def run_app_smoke():
     """Boot the real app headlessly on seeded synthetic data, then clean up."""
     from ffdrafter import store
@@ -245,5 +311,6 @@ def run_app_smoke():
 
 if __name__ == "__main__":
     run_engine_checks()
+    run_curve_scaling_checks()
     if "--app" in sys.argv:
         run_app_smoke()

@@ -33,6 +33,28 @@ BOARD_COLUMNS = [
 ]
 
 
+def _rescale_fitted_targets(targets, curve: dict, money: int):
+    """
+    Pin targets are literal dollars only in the room they were fitted in
+    (fitted_teams × fitted_budget of league money). For any other room, scale
+    them by (money ratio) ** elasticity: 0 keeps absolute dollars (all extra
+    money would sag into the mid tier), 1 tracks money fully (contradicts the
+    fitted saturation — nobody pays $118 for the #1), 0.5 splits the difference.
+    Missing fitted_* keys = unknown provenance -> no scaling.
+    """
+    fit_teams, fit_budget = curve.get("fitted_teams"), curve.get("fitted_budget")
+    if not fit_teams or not fit_budget:
+        return targets
+    ratio = float(money) / (float(fit_teams) * float(fit_budget))
+    scale = ratio ** float(curve.get("elasticity", 0.5))
+    if abs(scale - 1.0) < 1e-9:
+        return targets
+    logger.info("Price curve: pins fitted in a %d-team $%d room rescaled ×%.3f "
+                "for this room's $%d (elasticity %.2f)", fit_teams, fit_budget,
+                scale, money, float(curve.get("elasticity", 0.5)))
+    return targets * scale
+
+
 def _scale_to_budget(values, league: dict):
     """
     Given a non-negative value signal (AAV or VOR) per player, return integer
@@ -48,7 +70,10 @@ def _scale_to_budget(values, league: dict):
     the top `top_n` dollars to a rank-linear band (top1_target -> topn_target)
     and rescale every other player's above-$1 money so the pool still sums to
     league money: the mid tier sags and the tail compresses toward the floor —
-    exactly the observed zero-sum reshape.
+    exactly the observed zero-sum reshape. The pins themselves are dollars in
+    the room they were FITTED in; a different league size first rescales them
+    via _rescale_fitted_targets, so a bigger room lifts the stars
+    sub-proportionally instead of dumping all its extra money on the mids.
     """
     teams = league["teams"]
     budget = league["budget"]
@@ -70,6 +95,8 @@ def _scale_to_budget(values, league: dict):
         targets = np.linspace(float(t1), float(tn), num=int(curve.get("top_n", 10)))
     else:
         targets = None
+    if targets is not None:
+        targets = _rescale_fitted_targets(targets, curve, money)
     if targets is not None and len(dollars) > len(targets):
         top_n = len(targets)
         order = dollars.sort_values(ascending=False).index
