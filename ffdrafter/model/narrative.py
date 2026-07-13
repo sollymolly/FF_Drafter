@@ -44,7 +44,6 @@ def fetch_nudges(cap: float = 0.10, scale: float = 0.15, max_athletes: int = 4,
     player, and are skipped — this keeps the signal player-specific.
     """
     import pandas as pd
-    from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
     cache = PATHS["raw"] / "news_nudges.parquet"
     if not force_refresh:
@@ -52,6 +51,10 @@ def fetch_nudges(cap: float = 0.10, scale: float = 0.15, max_athletes: int = 4,
         if cached is not None:
             logger.info("Cached news nudges: %d players", len(cached))
             return cached
+
+    # Deferred import: only the refresh path scores headlines, so serving the
+    # cached nudges must not require the sentiment lib (the live app's case).
+    from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
     try:
         articles = _fetch_articles()

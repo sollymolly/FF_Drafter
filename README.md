@@ -39,7 +39,8 @@ data/{raw,processed,board}/
 ## Setup
 
 ```bash
-pip install -r requirements.txt          # all free
+pip install -r requirements.txt           # app only (pinned — what Streamlit Cloud installs)
+pip install -r requirements-pipeline.txt  # + data/training extras (build_board --refresh etc.)
 cp .env.example .env                      # add a free CollegeFootballData key (rookies)
 ```
 

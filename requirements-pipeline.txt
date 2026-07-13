@@ -1,0 +1,15 @@
+# ============================================================
+# FF Drafter — PIPELINE extras (data pulls, feature building, model training).
+# Only scripts/build_board.py and the model/ training path need these; the
+# live app does not, and Streamlit Cloud must not install them (every extra
+# native wheel is another way for a cloud reboot to break).
+#   pip install -r requirements-pipeline.txt
+# ============================================================
+-r requirements.txt
+
+nflreadpy>=0.1.5       # nflverse: season stats, ID crosswalk, draft picks
+beautifulsoup4>=4.12   # FantasyPros / news HTML parsing
+lxml>=5.2              # fast parser for BeautifulSoup
+scikit-learn>=1.5      # HistGradientBoostingRegressor (projection + quantile heads)
+scipy>=1.13            # rank correlation in backtest
+python-dotenv>=1.0     # load CFBD_API_KEY from .env
